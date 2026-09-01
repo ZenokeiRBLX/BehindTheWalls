@@ -1,0 +1,27 @@
+# Roblox / Studio
+*.rbxlx
+*.rbxl
+*.rbxm
+*.rbxmx
+*.rbxm
+*.rbxl.lock
+*.rbxlx.lock
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Rojo
+/*.rbxlx
+/*.rbxl
+
+# Build artifacts
+build/
+dist/

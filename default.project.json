@@ -1,0 +1,44 @@
+{
+  "name": "BehindTheWalls",
+  "tree": {
+    "$className": "DataModel",
+    "children": [
+      {
+        "name": "ReplicatedStorage",
+        "$className": "ReplicatedStorage",
+        "children": [
+          {
+            "name": "Shared",
+            "$path": "src/ReplicatedStorage/Shared"
+          }
+        ]
+      },
+      {
+        "name": "ServerScriptService",
+        "$className": "ServerScriptService",
+        "children": [
+          {
+            "name": "Main",
+            "$path": "src/ServerScriptService/Main.server.lua"
+          }
+        ]
+      },
+      {
+        "name": "StarterPlayer",
+        "$className": "StarterPlayer",
+        "children": [
+          {
+            "name": "StarterPlayerScripts",
+            "$className": "StarterPlayerScripts",
+            "children": [
+              {
+                "name": "Client",
+                "$path": "src/StarterPlayer/StarterPlayerScripts/Client.client.lua"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
