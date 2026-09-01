@@ -25,6 +25,10 @@
           {
             "name": "Main",
             "$path": "src/ServerScriptService/Main.server.lua"
+          },
+          {
+            "name": "MapBuilder",
+            "$path": "src/ServerScriptService/MapBuilder.server.lua"
           }
         ]
       },
