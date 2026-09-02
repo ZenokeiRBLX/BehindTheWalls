@@ -234,6 +234,12 @@ local function waitForLoadingDone()
 	end
 end
 
+local function setCoreGuiEnabled(enabled: boolean)
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, enabled)
+	end)
+end
+
 local function waitForLoadingScreenRemoved(playerGui: PlayerGui)
 	while playerGui:FindFirstChild("LoadingScreen") do
 		task.wait(0.1)
@@ -339,6 +345,7 @@ local function runIntro()
 	if not introGui then
 		stopCamera()
 		IntroScene.finish()
+		setCoreGuiEnabled(true)
 		return
 	end
 
@@ -389,6 +396,7 @@ local function runIntro()
 	stopCamera()
 	IntroScene.finish()
 	task.wait(TRANSITION_HOLD_TIME)
+	setCoreGuiEnabled(true)
 	removeTransition()
 end
 

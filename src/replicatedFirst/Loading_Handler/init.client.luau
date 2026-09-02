@@ -2,6 +2,13 @@
 local Players = game:GetService("Players")       -- tool to find the player
 local ts = game:GetService("TweenService")       -- tool that makes things fade/move smoothly
 local Lighting = game:GetService("Lighting")     -- tool to control lighting effects
+local StarterGui = game:GetService("StarterGui") -- tool to control the built-in Roblox UI
+
+-- Hide the Roblox UI (player list, chat, backpack...) until the intro is fully over;
+-- the intro screen turns it back on after the player taps to continue
+pcall(function()
+	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
+end)
 
 -- Find the player and their screen
 local player = Players.LocalPlayer
