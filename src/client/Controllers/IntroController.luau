@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
@@ -176,7 +177,7 @@ local function fadeOutIntro(introGui: ScreenGui, activeTweens: { Tween })
 		tween:Play()
 	end
 	task.wait(FADE_OUT_TIME)
-	introGui.Enabled = false
+	introGui:Destroy()
 end
 
 local function runIntro()
@@ -191,7 +192,14 @@ local function runIntro()
 
 	waitForLoadingDone()
 
-	local introGui = playerGui:WaitForChild("Intro_Screen", 10)
+	local introGui = playerGui:FindFirstChild("Intro_Screen")
+	if not introGui then
+		local template = StarterGui:FindFirstChild("Intro_Screen")
+		if template then
+			introGui = template:Clone()
+			introGui.Parent = playerGui
+		end
+	end
 	if not introGui then
 		stopCamera()
 		IntroScene.finish()

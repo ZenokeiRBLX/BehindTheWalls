@@ -18,10 +18,10 @@ local TWITCH_INTERVAL_MIN = 1.5
 local TWITCH_INTERVAL_MAX = 4
 local TWITCH_DECAY = 6
 
-local EERIE_AMBIENT = Color3.fromRGB(35, 46, 38)
-local EERIE_FOG_COLOR = Color3.fromRGB(8, 12, 9)
-local EERIE_FOG_END = 150
-local EERIE_TINT = Color3.fromRGB(190, 215, 190)
+local EERIE_AMBIENT = Color3.fromRGB(98, 112, 98)
+local EERIE_FOG_COLOR = Color3.fromRGB(18, 24, 19)
+local EERIE_FOG_END = 400
+local EERIE_TINT = Color3.fromRGB(200, 220, 200)
 
 local BONE_AMPLITUDES = {
 	{ pattern = "Finger", amplitude = math.rad(7) },
@@ -71,9 +71,9 @@ local function applyEerieLighting()
 
 	local colorCorrection = Instance.new("ColorCorrectionEffect")
 	colorCorrection.Name = "IntroSceneColorCorrection"
-	colorCorrection.Saturation = -0.35
-	colorCorrection.Contrast = 0.12
-	colorCorrection.Brightness = -0.03
+	colorCorrection.Saturation = -0.25
+	colorCorrection.Contrast = 0.08
+	colorCorrection.Brightness = 0.02
 	colorCorrection.TintColor = EERIE_TINT
 	colorCorrection.Parent = Lighting
 
