@@ -78,6 +78,10 @@ ts:Create(text, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.I
 ts:Create(sound, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Volume = 0}):Play()
 
 task.wait(2.5) -- wait for those to finish
+
+-- Tell the intro screen we're done, so it can appear underneath before we fade away
+player:SetAttribute("LoadingScreenDone", true)
+
 ts:Create(bgFrame.vignette, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency = 1}):Play()
 -- Make the whole box disappear
 ts:Create(bgFrame, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency = 1}):Play()

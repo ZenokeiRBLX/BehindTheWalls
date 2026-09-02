@@ -3,6 +3,7 @@
   "properties": {
     "IgnoreGuiInset": true,
     "ResetOnSpawn": true,
+    "DisplayOrder": 100,
     "ZIndexBehavior": "Sibling",
     "ScreenInsets": "None",
     "SafeAreaCompatibility": "FullscreenExtension"
