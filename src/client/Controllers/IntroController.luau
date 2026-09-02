@@ -20,7 +20,12 @@ local GLITCH_MIN_DELAY = 5
 local GLITCH_MAX_DELAY = 10
 local STATIC_FLICKER_MIN = 0.5
 local STATIC_FLICKER_MAX = 0.7
-local TAP_PULSE_TIME = 0.55
+local TAP_PULSE_TIME = 1.1
+local FOV_MIN = 54
+local FOV_MAX = 68
+local FOV_CHANGE_MIN = 2
+local FOV_CHANGE_MAX = 5
+local FOV_LERP_SPEED = 1.5
 local LOGO_SHAKE_PIXELS = 2
 local LOGO_SHAKE_ROTATION = 0.6
 local FADE_OUT_TIME = 0.6
@@ -44,14 +49,30 @@ local function resolveCameraPart(): BasePart?
 	return nil
 end
 
+local savedFov: number?
+
 local function startCamera(camPart: BasePart)
 	local smoothMouse = Vector2.zero
+	local startCam = Workspace.CurrentCamera
+	savedFov = startCam and startCam.FieldOfView or 70
+	local currentFov = savedFov :: number
+	local targetFov = currentFov
+	local clock = 0
+	local nextFovChange = 0
 	RunService:BindToRenderStep(CAMERA_BIND, Enum.RenderPriority.Camera.Value + 1, function(deltaTime)
 		local camera = Workspace.CurrentCamera
 		if not camera then
 			return
 		end
 		camera.CameraType = Enum.CameraType.Scriptable
+
+		clock += deltaTime
+		if clock >= nextFovChange then
+			targetFov = FOV_MIN + math.random() * (FOV_MAX - FOV_MIN)
+			nextFovChange = clock + FOV_CHANGE_MIN + math.random() * (FOV_CHANGE_MAX - FOV_CHANGE_MIN)
+		end
+		currentFov += (targetFov - currentFov) * math.min(deltaTime * FOV_LERP_SPEED, 1)
+		camera.FieldOfView = currentFov
 		local viewport = camera.ViewportSize
 		local target = Vector2.zero
 		if viewport.X > 0 and viewport.Y > 0 then
@@ -77,6 +98,9 @@ local function stopCamera()
 		return
 	end
 	camera.CameraType = Enum.CameraType.Custom
+	if savedFov then
+		camera.FieldOfView = savedFov
+	end
 	local character = Players.LocalPlayer.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	if humanoid then

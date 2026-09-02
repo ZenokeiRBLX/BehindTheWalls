@@ -14,6 +14,8 @@ local FLASH_INTERVAL_MAX = 8
 local FLASH_PULSES_MIN = 2
 local FLASH_PULSES_MAX = 4
 local FLASH_BRIGHTNESS = 6
+local FLASH_ON_MIN = 0.2
+local FLASH_ON_MAX = 0.45
 local TWITCH_INTERVAL_MIN = 1.5
 local TWITCH_INTERVAL_MAX = 4
 local TWITCH_DECAY = 6
@@ -195,7 +197,7 @@ local function startBeamFlicker(beam: Beam)
 	end)
 end
 
-local function startFlashLoop(flashLights: { PointLight })
+local function startFlashLoop(flashLights: { PointLight }, flashPart: BasePart?)
 	for _, light in flashLights do
 		local originalBrightness = light.Brightness
 		table.insert(restoreFunctions, function()
@@ -203,9 +205,21 @@ local function startFlashLoop(flashLights: { PointLight })
 		end)
 	end
 
+	local originalPartColor: Color3?
+	if flashPart then
+		originalPartColor = flashPart.Color
+		flashPart.Color = Color3.new(0, 0, 0)
+		table.insert(restoreFunctions, function()
+			flashPart.Color = originalPartColor :: Color3
+		end)
+	end
+
 	local function setFlash(brightness: number)
 		for _, light in flashLights do
 			light.Brightness = brightness
+		end
+		if flashPart and originalPartColor then
+			flashPart.Color = if brightness > 0 then originalPartColor :: Color3 else Color3.new(0, 0, 0)
 		end
 	end
 
@@ -225,12 +239,12 @@ local function startFlashLoop(flashLights: { PointLight })
 				if boiledOne then
 					boiledOne.Transparency = 0
 				end
-				task.wait(0.05 + math.random() * 0.08)
+				task.wait(FLASH_ON_MIN + math.random() * (FLASH_ON_MAX - FLASH_ON_MIN))
 				setFlash(0)
 				if boiledOne then
 					boiledOne.Transparency = 1
 				end
-				task.wait(0.04 + math.random() * 0.12)
+				task.wait(0.06 + math.random() * 0.14)
 			end
 		end
 		setFlash(0)
@@ -279,8 +293,9 @@ function IntroScene.begin()
 				table.insert(flashLights, descendant)
 			end
 		end
+		local flashPart = flashModel:FindFirstChild("Light")
 		if #flashLights > 0 then
-			startFlashLoop(flashLights)
+			startFlashLoop(flashLights, if flashPart and flashPart:IsA("BasePart") then flashPart else nil)
 		end
 	end
 
