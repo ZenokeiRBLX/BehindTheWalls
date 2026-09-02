@@ -16,30 +16,29 @@ local FLICKER_VOLUME_SCALE = 0.4
 local FLASH_PULSES_MIN = 2
 local FLASH_PULSES_MAX = 4
 local FLASH_BRIGHTNESS = 6
-local FLASH_ON_MIN = 0.2
-local FLASH_ON_MAX = 0.45
+local FLASH_ON_TIME = 0.3
+local FLASH_OFF_TIME = 0.12
 local POSES = {
 	{
 		{ pattern = "Head", angles = Vector3.new(0, 0, math.rad(35)) },
-		{ pattern = "Neck", angles = Vector3.new(0, 0, math.rad(15)) },
+		{ pattern = "Neck", angles = Vector3.new(0, 0, math.rad(12)) },
 		{ pattern = "Jaw", angles = Vector3.new(math.rad(20), 0, 0) },
 	},
 	{
-		{ pattern = "Head", angles = Vector3.new(math.rad(-30), 0, 0) },
-		{ pattern = "Neck", angles = Vector3.new(math.rad(-10), 0, 0) },
-		{ pattern = "Spine", angles = Vector3.new(math.rad(6), 0, 0) },
+		{ pattern = "Head", angles = Vector3.new(math.rad(-15), 0, 0) },
+		{ pattern = "Neck", angles = Vector3.new(math.rad(-6), 0, 0) },
+		{ pattern = "Jaw", angles = Vector3.new(math.rad(12), 0, 0) },
 	},
 	{
-		{ pattern = "Spine", angles = Vector3.new(math.rad(-10), 0, 0) },
-		{ pattern = "Head", angles = Vector3.new(math.rad(20), math.rad(25), 0) },
+		{ pattern = "Head", angles = Vector3.new(math.rad(12), 0, math.rad(-15)) },
 		{ pattern = "Arm1", angles = Vector3.new(0, 0, math.rad(18)) },
 	},
 	{
-		{ pattern = "Head", angles = Vector3.new(0, math.rad(-40), 0) },
+		{ pattern = "Head", angles = Vector3.new(0, 0, math.rad(-28)) },
 		{ pattern = "Jaw", angles = Vector3.new(math.rad(40), 0, 0) },
 	},
 	{
-		{ pattern = "Neck", angles = Vector3.new(0, math.rad(30), math.rad(10)) },
+		{ pattern = "Neck", angles = Vector3.new(0, 0, math.rad(10)) },
 		{ pattern = "Hand", angles = Vector3.new(math.rad(-15), 0, 0) },
 		{ pattern = "Finger", angles = Vector3.new(math.rad(25), 0, 0) },
 	},
@@ -51,6 +50,8 @@ local EERIE_FOG_END = 600
 local EERIE_TINT = Color3.fromRGB(208, 224, 208)
 
 local BONE_AMPLITUDES = {
+	{ pattern = "Pelvis", amplitude = 0 },
+	{ pattern = "Spine", amplitude = 0 },
 	{ pattern = "Finger", amplitude = math.rad(7) },
 	{ pattern = "Jaw", amplitude = math.rad(9) },
 	{ pattern = "Head", amplitude = math.rad(5) },
@@ -58,7 +59,6 @@ local BONE_AMPLITUDES = {
 	{ pattern = "Eye", amplitude = math.rad(3) },
 	{ pattern = "Arm", amplitude = math.rad(3) },
 	{ pattern = "Hand", amplitude = math.rad(4) },
-	{ pattern = "Spine", amplitude = math.rad(2) },
 }
 local DEFAULT_BONE_AMPLITUDE = math.rad(2.5)
 
@@ -268,12 +268,12 @@ local function startFlashLoop(flashLights: { PointLight }, flashPart: BasePart?)
 				if boiledOne then
 					boiledOne.Transparency = 0
 				end
-				task.wait(FLASH_ON_MIN + math.random() * (FLASH_ON_MAX - FLASH_ON_MIN))
+				task.wait(FLASH_ON_TIME)
 				setFlash(0)
 				if boiledOne then
 					boiledOne.Transparency = 1
 				end
-				task.wait(0.06 + math.random() * 0.14)
+				task.wait(FLASH_OFF_TIME)
 			end
 		end
 		setFlash(0)
@@ -346,22 +346,29 @@ function IntroScene.begin()
 	startHeartbeat()
 end
 
+local function playLoopedSound(name: string)
+	local soundInstance = SoundService:FindFirstChild(name)
+	if not soundInstance or not soundInstance:IsA("Sound") then
+		return
+	end
+	local originalLooped = soundInstance.Looped
+	soundInstance.Looped = true
+	soundInstance:Play()
+	table.insert(restoreFunctions, function()
+		soundInstance:Stop()
+		soundInstance.Looped = originalLooped
+	end)
+end
+
 function IntroScene.setRevealed()
 	if not isActive or isRevealed then
 		return
 	end
 	isRevealed = true
 
-	local ambience = SoundService:FindFirstChild("Sewer_Sound_Effect")
-	if ambience and ambience:IsA("Sound") then
-		local originalLooped = ambience.Looped
-		ambience.Looped = true
-		ambience:Play()
-		table.insert(restoreFunctions, function()
-			ambience:Stop()
-			ambience.Looped = originalLooped
-		end)
-	end
+	playLoopedSound("Sewer_Sound_Effect")
+	playLoopedSound("VHS")
+	playLoopedSound("Intro_Music")
 end
 
 function IntroScene.finish()

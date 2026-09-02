@@ -17,8 +17,9 @@ local CAM_MOUSE_TILT = math.rad(2.5)
 local CAM_MOUSE_SMOOTHING = 3.5
 local LOADING_DONE_ATTRIBUTE = "LoadingScreenDone"
 local LOADING_DONE_TIMEOUT = 90
-local GLITCH_MIN_DELAY = 5
-local GLITCH_MAX_DELAY = 10
+local GLITCH_MIN_DELAY = 3
+local GLITCH_MAX_DELAY = 6
+local VHS_BOB_TIME = 1.2
 local STATIC_FLICKER_MIN = 0.5
 local STATIC_FLICKER_MAX = 0.7
 local TAP_PULSE_TIME = 1.1
@@ -142,14 +143,14 @@ local function runStaticFlicker(vhs2: ImageLabel)
 		while introActive do
 			vhs2.ImageTransparency = STATIC_FLICKER_MIN
 				+ math.random() * (STATIC_FLICKER_MAX - STATIC_FLICKER_MIN)
-			task.wait(0.08 + math.random() * 0.07)
+			task.wait(0.04 + math.random() * 0.04)
 		end
 	end)
 end
 
 local function runScanlineBob(vhs1: ImageLabel)
 	local basePosition = vhs1.Position
-	local bobInfo = TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+	local bobInfo = TweenInfo.new(VHS_BOB_TIME, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 	local tween = TweenService:Create(vhs1, bobInfo, {
 		Position = basePosition + UDim2.fromScale(0, 0.03),
 	})
