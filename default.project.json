@@ -22,8 +22,8 @@
     },
 
     "ReplicatedFirst": {
-      "Introhandeler": {
-        "$path": "src/replicatedFirst/Introhandeler"
+      "Loading_Handler": {
+        "$path": "src/replicatedFirst/Loading_Handler"
       }
     },
 
