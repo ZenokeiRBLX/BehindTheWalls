@@ -44,6 +44,10 @@ local function sanitizePlayTime(amount: any): number
 	return math.max(0, math.floor(tonumber(amount) or 0))
 end
 
+local function sanitizeCount(amount: any): number
+	return math.max(0, math.floor(tonumber(amount) or 0))
+end
+
 local function sanitizeTimestamp(amount: any): number
 	return math.max(0, math.floor(tonumber(amount) or 0))
 end
@@ -74,6 +78,45 @@ local function setReplicaCoins(player: Player, coins: number)
 	local replica = playerReplicas[player]
 	if replica and replica:IsActive() and replica.Data.Coins ~= coins then
 		replica:Set({ "Coins" }, coins)
+	end
+end
+
+local function setReplicaWins(player: Player, wins: number)
+	local replica = playerReplicas[player]
+	if replica and replica:IsActive() and replica.Data.Wins ~= wins then
+		replica:Set({ "Wins" }, wins)
+	end
+end
+
+local function setReplicaDonated(player: Player, donated: number)
+	local replica = playerReplicas[player]
+	if replica and replica:IsActive() and replica.Data.Donated ~= donated then
+		replica:Set({ "Donated" }, donated)
+	end
+end
+
+local function createLeaderstats(player: Player, profile: PlayerProfile)
+	local leaderstats = Instance.new("Folder")
+	leaderstats.Name = "leaderstats"
+
+	local wins = Instance.new("IntValue")
+	wins.Name = "Wins"
+	wins.Value = profile.Data.Wins
+	wins.Parent = leaderstats
+
+	local donated = Instance.new("IntValue")
+	donated.Name = "Donated"
+	donated.Value = profile.Data.Donated
+	donated.Parent = leaderstats
+
+	leaderstats.Parent = player
+end
+
+local function updateLeaderstat(player: Player, statName: string, value: number)
+	local leaderstats = player:FindFirstChild("leaderstats")
+	local stat = leaderstats and leaderstats:FindFirstChild(statName)
+	if stat and stat:IsA("IntValue") then
+		stat.Value = value
 	end
 end
 
@@ -112,6 +155,8 @@ local function createPlayerReplica(player: Player, profile: PlayerProfile)
 		},
 		Data = {
 			Coins = profile.Data.Coins,
+			Wins = profile.Data.Wins,
+			Donated = profile.Data.Donated,
 			PlayTime = profile.Data.PlayTime,
 			Settings = profile.Data.Settings,
 		},
@@ -155,6 +200,8 @@ local function onPlayerAdded(player: Player)
 	profile:AddUserId(player.UserId)
 	profile:Reconcile()
 	profile.Data.Coins = sanitizeCoins(profile.Data.Coins)
+	profile.Data.Wins = sanitizeCount(profile.Data.Wins)
+	profile.Data.Donated = sanitizeCount(profile.Data.Donated)
 	profile.Data.PlayTime = sanitizePlayTime(profile.Data.PlayTime)
 	profile.Data.LastLogoutTime = sanitizeTimestamp(profile.Data.LastLogoutTime)
 	profile.Data.Settings = sanitizeBooleanMap(profile.Data.Settings)
@@ -170,6 +217,7 @@ local function onPlayerAdded(player: Player)
 	if player.Parent == Players then
 		profiles[player] = profile
 		createPlayerReplica(player, profile)
+		createLeaderstats(player, profile)
 	else
 		profile:EndSession()
 	end
@@ -288,6 +336,62 @@ function DataService.addCoins(player: Player, amount: number): boolean
 	end
 
 	return DataService.setCoins(player, coins + amount)
+end
+
+function DataService.getWins(player: Player): number?
+	local data = DataService.getData(player)
+	return if data then data.Wins else nil
+end
+
+function DataService.setWins(player: Player, amount: number): boolean
+	local profile = profiles[player]
+	if profile == nil or not profile:IsActive() then
+		return false
+	end
+
+	local wins = sanitizeCount(amount)
+	profile.Data.Wins = wins
+	setReplicaWins(player, wins)
+	updateLeaderstat(player, "Wins", wins)
+
+	return true
+end
+
+function DataService.addWins(player: Player, amount: number): boolean
+	local wins = DataService.getWins(player)
+	if wins == nil then
+		return false
+	end
+
+	return DataService.setWins(player, wins + amount)
+end
+
+function DataService.getDonated(player: Player): number?
+	local data = DataService.getData(player)
+	return if data then data.Donated else nil
+end
+
+function DataService.setDonated(player: Player, amount: number): boolean
+	local profile = profiles[player]
+	if profile == nil or not profile:IsActive() then
+		return false
+	end
+
+	local donated = sanitizeCount(amount)
+	profile.Data.Donated = donated
+	setReplicaDonated(player, donated)
+	updateLeaderstat(player, "Donated", donated)
+
+	return true
+end
+
+function DataService.addDonated(player: Player, amount: number): boolean
+	local donated = DataService.getDonated(player)
+	if donated == nil then
+		return false
+	end
+
+	return DataService.setDonated(player, donated + amount)
 end
 
 function DataService.getPlayTime(player: Player): number?
