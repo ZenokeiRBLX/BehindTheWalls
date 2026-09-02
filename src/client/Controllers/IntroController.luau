@@ -119,6 +119,14 @@ local function stopCamera()
 	if humanoid then
 		camera.CameraSubject = humanoid
 	end
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	if rootPart and rootPart:IsA("BasePart") then
+		local rootPosition = rootPart.Position
+		camera.CFrame = CFrame.lookAt(
+			rootPosition - rootPart.CFrame.LookVector * 10 + Vector3.new(0, 5, 0),
+			rootPosition
+		)
+	end
 end
 
 type UiMotion = {
