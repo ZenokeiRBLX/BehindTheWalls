@@ -39,6 +39,7 @@ This file applies to the entire repository.
 - `src/server/Modules` contains server-only services and helpers (`DataService`, `ProfileTemplate`, `ProfileStore`, `DataConfig`).
 - `src/client/Bootstrap.client.luau` is the client entry point; it starts `ControllerRegistry`.
 - `src/client/Controllers` contains client controllers started by `ControllerRegistry` (`PlayerDataController`, `IntroController`, `MusicController`).
+- `src/client/Modules` contains client-only modules (`IntroScene` owns the sewer intro scene effects), synced to `StarterPlayerScripts.Client.Modules`.
 - `src/shared/Modules` contains modules shared by client and server (`Config`, `GameInfo`), synced to `ReplicatedStorage.Shared.Modules`.
 - `src/replicatedFirst/Loading_Handler` is the `ReplicatedFirst` intro/loading screen (script plus JSON-backed GUI).
 - `src/network/main.blink` is the Blink IDL source.

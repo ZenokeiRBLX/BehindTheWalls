@@ -6,6 +6,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local Blink = require(ReplicatedStorage:WaitForChild("Blink"):WaitForChild("Client"))
+local IntroScene = require(script.Parent.Parent:WaitForChild("Modules"):WaitForChild("IntroScene"))
 
 local IntroController = {}
 
@@ -186,12 +187,14 @@ local function runIntro()
 	if camPart then
 		startCamera(camPart)
 	end
+	IntroScene.begin()
 
 	waitForLoadingDone()
 
 	local introGui = playerGui:WaitForChild("Intro_Screen", 10)
 	if not introGui then
 		stopCamera()
+		IntroScene.finish()
 		return
 	end
 
@@ -222,6 +225,7 @@ local function runIntro()
 		player.CharacterAdded:Wait()
 	end
 	stopCamera()
+	IntroScene.finish()
 end
 
 function IntroController.start()

@@ -63,6 +63,10 @@
           "Controllers": {
             "$className": "Folder",
             "$path": "src/client/Controllers"
+          },
+          "Modules": {
+            "$className": "Folder",
+            "$path": "src/client/Modules"
           }
         }
       }
