@@ -16,10 +16,6 @@ local bgFrame = introGui:WaitForChild("BGFrame")
 local text = bgFrame:WaitForChild("mainText")
 local sound = bgFrame.textSound
 
--- Hand the intro music straight to SoundService; the intro menu plays it once it appears
-sound.Name = "Intro_Music"
-sound.Parent = game:GetService("SoundService")
-
 -- Wait here until the whole game is ready
 repeat task.wait() until game:IsLoaded()
 
@@ -62,6 +58,7 @@ if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
 
+sound:Play() -- start the loading screen music
 task.wait(2.5) -- wait a bit before words show up
 
 -- Show each line, one after another
@@ -76,6 +73,9 @@ ts:Create(bgFrame, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.
 
 -- Make the last words fade away
 ts:Create(text, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {TextTransparency = 1}):Play()
+
+-- Fade the sound out smoothly instead of cutting off abruptly
+ts:Create(sound, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Volume = 0}):Play()
 
 task.wait(2.5) -- wait for those to finish
 
@@ -93,5 +93,6 @@ ts:Create(blur, TweenInfo.new(2.5, Enum.EasingStyle.Quad, Enum.EasingDirection.I
 task.wait(5) -- wait a bit more
 
 introGui:Destroy() -- get rid of the intro screen, we don't need it anymore
+sound:Stop() -- make sure it's fully stopped (Volume 0 doesn't free it up)
 colorCorrection:Destroy() -- also remove the effects completely so nothing lingers
 blur:Destroy()

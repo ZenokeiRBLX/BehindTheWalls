@@ -1,7 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -324,17 +323,6 @@ local function runIntro()
 
 	introActive = false
 	local removeTransition = playBlackTransition(playerGui)
-
-	local introMusic = SoundService:FindFirstChild("Intro_Music")
-	if introMusic and introMusic:IsA("Sound") then
-		TweenService:Create(introMusic, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {
-			Volume = 0,
-		}):Play()
-		task.delay(0.7, function()
-			introMusic:Destroy()
-		end)
-	end
-
 	Blink.RequestSpawn.Fire()
 	fadeOutIntro(introGui, activeTweens)
 	if not player.Character then

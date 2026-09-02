@@ -368,7 +368,6 @@ function IntroScene.setRevealed()
 
 	playLoopedSound("Sewer_Sound_Effect")
 	playLoopedSound("VHS")
-	playLoopedSound("Intro_Music")
 end
 
 function IntroScene.finish()
