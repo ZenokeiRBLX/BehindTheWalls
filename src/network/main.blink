@@ -1,0 +1,14 @@
+option ClientOutput = "../shared/Blink/Client.luau"
+option ServerOutput = "../shared/Blink/Server.luau"
+
+struct MatchStateData {
+    phase: string,
+    remaining: u16
+}
+
+event MatchState {
+    From: Server,
+    Type: Reliable,
+    Call: SingleAsync,
+    Data: MatchStateData
+}

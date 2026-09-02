@@ -3,34 +3,34 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local Config = require(Shared:WaitForChild("Config"))
+local Config = require(Shared:WaitForChild("Modules"):WaitForChild("Config"))
+local Blink = require(ReplicatedStorage:WaitForChild("Blink"):WaitForChild("Server"))
 
-local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes") or Instance.new("Folder")
-remotesFolder.Name = "Remotes"
-remotesFolder.Parent = ReplicatedStorage
+local RoundSystem = {}
 
-local matchStateRemote = remotesFolder:FindFirstChild("MatchState") or Instance.new("RemoteEvent")
-matchStateRemote.Name = "MatchState"
-matchStateRemote.Parent = remotesFolder
+local isStarted = false
 
 local roundState = {
 	phase = "Lobby",
 	remaining = Config.LobbyTimeSeconds,
 }
 
-local playerRoles = {}
+local playerRoles: { [Player]: string } = {}
 
 local function broadcastMatchState()
-	matchStateRemote:FireAllClients(roundState.phase, roundState.remaining)
+	Blink.MatchState.FireAll({
+		phase = roundState.phase,
+		remaining = math.max(roundState.remaining, 0),
+	})
 end
 
-local function setPhase(newPhase, newRemaining)
+local function setPhase(newPhase: string, newRemaining: number)
 	roundState.phase = newPhase
 	roundState.remaining = newRemaining
 	broadcastMatchState()
 end
 
-local function getSpawnLocation(role)
+local function getSpawnLocation(role: string): Vector3
 	local arena = Workspace:FindFirstChild("Arena")
 	if not arena then
 		return Config.DefaultSpawnPosition
@@ -58,7 +58,7 @@ end
 local function assignRoles()
 	local players = Players:GetPlayers()
 	local hunterCount = 1
-	for _, player in ipairs(players) do
+	for _, player in players do
 		local role = (hunterCount <= 1 and Config.TeamNames.Hunter) or Config.TeamNames.Runner
 		playerRoles[player] = role
 		player:SetAttribute("Role", role)
@@ -66,7 +66,7 @@ local function assignRoles()
 	end
 end
 
-local function respawnPlayer(player)
+local function respawnPlayer(player: Player)
 	local role = playerRoles[player] or Config.TeamNames.Runner
 	local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 	if rootPart then
@@ -74,7 +74,7 @@ local function respawnPlayer(player)
 		return
 	end
 
-	player.CharacterAdded:Connect(function(character)
+	player.CharacterAdded:Once(function(character)
 		local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 		humanoidRootPart.CFrame = CFrame.new(getSpawnLocation(role))
 	end)
@@ -82,7 +82,7 @@ end
 
 local function startRoundLoop()
 	assignRoles()
-	for _, player in ipairs(Players:GetPlayers()) do
+	for _, player in Players:GetPlayers() do
 		respawnPlayer(player)
 	end
 
@@ -120,17 +120,27 @@ local function startRoundLoop()
 	end
 end
 
-Players.PlayerAdded:Connect(function(player)
-	print(string.format("[%s] joined the server.", player.Name))
-	assignRoles()
-	matchStateRemote:FireClient(player, roundState.phase, roundState.remaining)
-	respawnPlayer(player)
-end)
+function RoundSystem.start()
+	if isStarted then
+		return
+	end
+	isStarted = true
 
-Players.PlayerRemoving:Connect(function(player)
-	print(string.format("[%s] left the server.", player.Name))
-	playerRoles[player] = nil
-end)
+	Players.PlayerAdded:Connect(function(player)
+		assignRoles()
+		Blink.MatchState.Fire(player, {
+			phase = roundState.phase,
+			remaining = math.max(roundState.remaining, 0),
+		})
+		respawnPlayer(player)
+	end)
 
-print(string.format("[%s] server initialized.", Config.GameName))
-startRoundLoop()
+	Players.PlayerRemoving:Connect(function(player)
+		playerRoles[player] = nil
+	end)
+
+	task.spawn(startRoundLoop)
+	print(string.format("[%s] server initialized.", Config.GameName))
+end
+
+return RoundSystem

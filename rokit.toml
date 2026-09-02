@@ -1,0 +1,6 @@
+# This file lists tools managed by Rokit, a toolchain manager for Roblox projects.
+# Blink is installed through Rokit because its current releases are not Aftman-compatible.
+
+[tools]
+rojo = "rojo-rbx/rojo@7.7.0"
+blink = "1Axen/blink@0.18.8"

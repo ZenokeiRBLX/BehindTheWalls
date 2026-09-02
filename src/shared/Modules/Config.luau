@@ -1,6 +1,6 @@
 local Config = {}
 
-Config.GameName = "BehindTheWalls"
+Config.GameName = "Behind Every Wall"
 Config.MaxPlayers = 12
 Config.LobbyTimeSeconds = 15
 Config.RoundLengthSeconds = 180

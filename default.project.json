@@ -2,52 +2,75 @@
   "name": "BehindTheWalls",
   "tree": {
     "$className": "DataModel",
-    "children": [
-      {
-        "name": "ReplicatedStorage",
-        "$className": "ReplicatedStorage",
-        "children": [
-          {
-            "name": "Shared",
-            "$path": "src/ReplicatedStorage/Shared"
-          },
-          {
-            "name": "Remotes",
-            "$className": "Folder",
-            "children": []
-          }
-        ]
+
+    "ReplicatedStorage": {
+      "ReplicaClient": {
+        "$path": "src/vendor/Replica/ReplicaClient.luau"
       },
-      {
-        "name": "ServerScriptService",
-        "$className": "ServerScriptService",
-        "children": [
-          {
-            "name": "Main",
-            "$path": "src/ServerScriptService/Main.server.lua"
-          },
-          {
-            "name": "MapBuilder",
-            "$path": "src/ServerScriptService/MapBuilder.server.lua"
-          }
-        ]
+      "ReplicaShared": {
+        "$path": "src/vendor/Replica/ReplicaShared"
       },
-      {
-        "name": "StarterPlayer",
-        "$className": "StarterPlayer",
-        "children": [
-          {
-            "name": "StarterPlayerScripts",
-            "$className": "StarterPlayerScripts",
-            "children": [
-              {
-                "name": "Client",
-                "$path": "src/StarterPlayer/StarterPlayerScripts/Client.client.lua"
-              }
-            ]
-          }
-        ]
+      "Blink": {
+        "$path": "src/shared/Blink"
+      },
+      "Shared": {
+        "$className": "Folder",
+        "Modules": {
+          "$path": "src/shared/Modules"
+        }
       }
-    ]
+    },
+
+    "ReplicatedFirst": {
+      "Introhandeler": {
+        "$path": "src/replicatedFirst/Introhandeler"
+      }
+    },
+
+    "ServerScriptService": {
+      "$ignoreUnknownInstances": true,
+      "ReplicaServer": {
+        "$path": "src/vendor/Replica/ReplicaServer.luau"
+      },
+      "Server": {
+        "$className": "Folder",
+        "Bootstrap": {
+          "$path": "src/server/Bootstrap.server.luau"
+        },
+        "Systems": {
+          "$className": "Folder",
+          "$path": "src/server/Systems"
+        },
+        "Modules": {
+          "$className": "Folder",
+          "$path": "src/server/Modules"
+        }
+      }
+    },
+
+    "StarterGui": {
+      "$className": "StarterGui",
+      "$ignoreUnknownInstances": true
+    },
+
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Client": {
+          "$className": "Folder",
+          "Bootstrap": {
+            "$path": "src/client/Bootstrap.client.luau"
+          },
+          "Controllers": {
+            "$className": "Folder",
+            "$path": "src/client/Controllers"
+          }
+        }
+      }
+    },
+
+    "Workspace": {
+      "$className": "Workspace",
+      "$ignoreUnknownInstances": true
+    }
   }
 }
