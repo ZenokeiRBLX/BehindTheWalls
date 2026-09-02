@@ -1,5 +1,6 @@
 local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local Workspace = game:GetService("Workspace")
 
 local IntroScene = {}
@@ -230,6 +231,10 @@ local function startFlashLoop(flashLights: { PointLight }, flashPart: BasePart?)
 				break
 			end
 			local pulses = math.random(FLASH_PULSES_MIN, FLASH_PULSES_MAX)
+			local flickerSound = SoundService:FindFirstChild("Light_Flicker")
+			if flickerSound and flickerSound:IsA("Sound") then
+				flickerSound:Play()
+			end
 			for _ = 1, pulses do
 				if not isActive then
 					break
@@ -264,6 +269,13 @@ function IntroScene.begin()
 	end
 
 	applyEerieLighting()
+
+	local originalReverb = SoundService.AmbientReverb
+	SoundService.AmbientReverb = Enum.ReverbType.SewerPipe
+	table.insert(restoreFunctions, function()
+		SoundService.AmbientReverb = originalReverb
+	end)
+
 	collectMoss(sewer)
 
 	local boiled = sewer:FindFirstChild("The Boiled One")

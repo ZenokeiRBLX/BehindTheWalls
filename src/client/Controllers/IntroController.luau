@@ -29,6 +29,9 @@ local FOV_LERP_SPEED = 1.5
 local LOGO_SHAKE_PIXELS = 2
 local LOGO_SHAKE_ROTATION = 0.6
 local FADE_OUT_TIME = 0.6
+local TRANSITION_IN_TIME = 0.35
+local TRANSITION_OUT_TIME = 0.8
+local TRANSITION_HOLD_TIME = 0.3
 
 local isStarted = false
 local introActive = false
@@ -197,6 +200,41 @@ local function waitForContinue()
 	connection:Disconnect()
 end
 
+local function playBlackTransition(playerGui: PlayerGui): () -> ()
+	local transitionGui = Instance.new("ScreenGui")
+	transitionGui.Name = "Black_Transition"
+	transitionGui.IgnoreGuiInset = true
+	transitionGui.ResetOnSpawn = false
+	transitionGui.DisplayOrder = 200
+	transitionGui.Parent = playerGui
+
+	local cover = Instance.new("Frame")
+	cover.Size = UDim2.fromScale(1, 1)
+	cover.BackgroundColor3 = Color3.new(0, 0, 0)
+	cover.BackgroundTransparency = 1
+	cover.BorderSizePixel = 0
+	cover.Parent = transitionGui
+
+	local fadeIn = TweenService:Create(
+		cover,
+		TweenInfo.new(TRANSITION_IN_TIME, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+		{ BackgroundTransparency = 0 }
+	)
+	fadeIn:Play()
+	fadeIn.Completed:Wait()
+
+	return function()
+		local fadeOut = TweenService:Create(
+			cover,
+			TweenInfo.new(TRANSITION_OUT_TIME, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+			{ BackgroundTransparency = 1 }
+		)
+		fadeOut:Play()
+		fadeOut.Completed:Wait()
+		transitionGui:Destroy()
+	end
+end
+
 local function fadeOutIntro(introGui: ScreenGui, activeTweens: { Tween })
 	for _, tween in activeTweens do
 		tween:Cancel()
@@ -276,6 +314,7 @@ local function runIntro()
 	waitForContinue()
 
 	introActive = false
+	local removeTransition = playBlackTransition(playerGui)
 	Blink.RequestSpawn.Fire()
 	fadeOutIntro(introGui, activeTweens)
 	if not player.Character then
@@ -283,6 +322,8 @@ local function runIntro()
 	end
 	stopCamera()
 	IntroScene.finish()
+	task.wait(TRANSITION_HOLD_TIME)
+	removeTransition()
 end
 
 function IntroController.start()
