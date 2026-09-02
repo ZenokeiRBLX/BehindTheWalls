@@ -10,8 +10,9 @@ local MOSS_SWAY_ANGLE = math.rad(4.5)
 local BEAM_FLICKER_MIN_WAIT = 0.08
 local BEAM_FLICKER_MAX_WAIT = 0.35
 local BEAM_DROPOUT_CHANCE = 0.18
-local FLASH_INTERVAL_MIN = 4
-local FLASH_INTERVAL_MAX = 8
+local FLASH_INTERVAL_MIN = 2
+local FLASH_INTERVAL_MAX = 4.5
+local FLICKER_VOLUME_SCALE = 0.4
 local FLASH_PULSES_MIN = 2
 local FLASH_PULSES_MAX = 4
 local FLASH_BRIGHTNESS = 6
@@ -298,6 +299,15 @@ function IntroScene.begin()
 	table.insert(restoreFunctions, function()
 		SoundService.AmbientReverb = originalReverb
 	end)
+
+	local flickerSound = SoundService:FindFirstChild("Light_Flicker")
+	if flickerSound and flickerSound:IsA("Sound") then
+		local originalVolume = flickerSound.Volume
+		flickerSound.Volume = originalVolume * FLICKER_VOLUME_SCALE
+		table.insert(restoreFunctions, function()
+			flickerSound.Volume = originalVolume
+		end)
+	end
 
 	collectMoss(sewer)
 

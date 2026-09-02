@@ -74,9 +74,6 @@ ts:Create(bgFrame, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.
 -- Make the last words fade away
 ts:Create(text, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {TextTransparency = 1}):Play()
 
--- Fade the sound out smoothly instead of cutting off abruptly
-ts:Create(sound, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Volume = 0}):Play()
-
 task.wait(2.5) -- wait for those to finish
 
 -- Tell the intro screen we're done, so it can appear underneath before we fade away
@@ -92,7 +89,10 @@ ts:Create(blur, TweenInfo.new(2.5, Enum.EasingStyle.Quad, Enum.EasingDirection.I
 
 task.wait(5) -- wait a bit more
 
+-- Keep the intro music looping into the intro menu; the intro screen stops it when the player continues
+sound.Name = "Intro_Music"
+sound.Parent = game:GetService("SoundService")
+
 introGui:Destroy() -- get rid of the intro screen, we don't need it anymore
-sound:Stop() -- make sure it's fully stopped (Volume 0 doesn't free it up)
 colorCorrection:Destroy() -- also remove the effects completely so nothing lingers
 blur:Destroy()

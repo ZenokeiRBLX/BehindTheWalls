@@ -69,7 +69,8 @@
           "className": "Sound",
           "properties": {
             "SoundId": "rbxassetid://86481683367589",
-            "Volume": 0.5
+            "Volume": 0.5,
+            "Looped": true
           }
         }
       ]
