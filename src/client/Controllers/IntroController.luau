@@ -20,7 +20,9 @@ local GLITCH_MIN_DELAY = 5
 local GLITCH_MAX_DELAY = 10
 local STATIC_FLICKER_MIN = 0.5
 local STATIC_FLICKER_MAX = 0.7
-local TAP_PULSE_TIME = 1.2
+local TAP_PULSE_TIME = 0.55
+local LOGO_SHAKE_PIXELS = 2
+local LOGO_SHAKE_ROTATION = 0.6
 local FADE_OUT_TIME = 0.6
 
 local isStarted = false
@@ -123,9 +125,24 @@ end
 
 local function runTapPulse(tapText: TextLabel)
 	local pulseInfo = TweenInfo.new(TAP_PULSE_TIME, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
-	local tween = TweenService:Create(tapText, pulseInfo, { TextTransparency = 0.5 })
+	local tween = TweenService:Create(tapText, pulseInfo, { TextTransparency = 0.85 })
 	tween:Play()
 	return tween
+end
+
+local function runLogoShake(logo: ImageLabel)
+	local basePosition = logo.Position
+	local baseRotation = logo.Rotation
+	task.spawn(function()
+		while introActive do
+			logo.Position = basePosition
+				+ UDim2.fromOffset(math.random(-LOGO_SHAKE_PIXELS, LOGO_SHAKE_PIXELS), math.random(-LOGO_SHAKE_PIXELS, LOGO_SHAKE_PIXELS))
+			logo.Rotation = baseRotation + (math.random() - 0.5) * 2 * LOGO_SHAKE_ROTATION
+			task.wait(0.05 + math.random() * 0.06)
+		end
+		logo.Position = basePosition
+		logo.Rotation = baseRotation
+	end)
 end
 
 local function waitForLoadingDone()
@@ -207,22 +224,30 @@ local function runIntro()
 	end
 
 	introGui.ResetOnSpawn = false
-	local frame = introGui:WaitForChild("Frame")
-	local vhs1 = frame:WaitForChild("VHS1")
-	local vhs2 = frame:WaitForChild("VHS2")
-	local tapText = introGui:WaitForChild("Tap_Text")
-	local logo = introGui:WaitForChild("ImageLabel")
+	local frame = introGui:FindFirstChild("Frame")
+	local vhs1 = frame and frame:FindFirstChild("VHS1")
+	local vhs2 = frame and frame:FindFirstChild("VHS2")
+	local tapText = introGui:FindFirstChild("Tap_Text")
+	local logo = introGui:FindFirstChild("Game_Logo") or introGui:FindFirstChild("ImageLabel")
 
 	introActive = true
 	introGui.Enabled = true
 
-	local activeTweens = {
-		runScanlineBob(vhs1),
-		runTapPulse(tapText),
-	}
-	runStaticFlicker(vhs2)
-	runGlitchLoop(tapText, "TextTransparency")
-	runGlitchLoop(logo, "ImageTransparency")
+	local activeTweens = {}
+	if vhs1 and vhs1:IsA("ImageLabel") then
+		table.insert(activeTweens, runScanlineBob(vhs1))
+	end
+	if vhs2 and vhs2:IsA("ImageLabel") then
+		runStaticFlicker(vhs2)
+	end
+	if tapText and tapText:IsA("TextLabel") then
+		table.insert(activeTweens, runTapPulse(tapText))
+		runGlitchLoop(tapText, "TextTransparency")
+	end
+	if logo and logo:IsA("ImageLabel") then
+		runLogoShake(logo)
+		runGlitchLoop(logo, "ImageTransparency")
+	end
 
 	waitForContinue()
 
