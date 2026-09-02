@@ -15,7 +15,8 @@ local FLASH_INTERVAL_MAX = 4.5
 local FLICKER_VOLUME_SCALE = 0.4
 local FLASH_PULSES_MIN = 2
 local FLASH_PULSES_MAX = 4
-local FLASH_BRIGHTNESS = 25
+local FLASH_BRIGHTNESS = 40
+local FLASH_RANGE = 60
 local FLASH_ON_TIME = 0.3
 local FLASH_OFF_TIME = 0.12
 local POSES = {
@@ -41,7 +42,7 @@ local POSES = {
 	},
 }
 
-local EERIE_AMBIENT = Color3.fromRGB(130, 140, 130)
+local EERIE_AMBIENT = Color3.fromRGB(152, 160, 152)
 local EERIE_FOG_COLOR = Color3.fromRGB(28, 34, 29)
 local EERIE_FOG_END = 600
 local EERIE_TINT = Color3.fromRGB(208, 224, 208)
@@ -98,7 +99,7 @@ local function applyEerieLighting()
 	colorCorrection.Name = "IntroSceneColorCorrection"
 	colorCorrection.Saturation = -0.2
 	colorCorrection.Contrast = 0.06
-	colorCorrection.Brightness = 0.05
+	colorCorrection.Brightness = 0.09
 	colorCorrection.TintColor = EERIE_TINT
 	colorCorrection.Parent = Lighting
 
@@ -220,10 +221,13 @@ local function startBeamFlicker(beam: Beam)
 end
 
 local function startFlashLoop(flashLights: { PointLight }, flashPart: BasePart?)
+	local originalRanges: { [PointLight]: number } = {}
 	for _, light in flashLights do
 		local originalBrightness = light.Brightness
+		originalRanges[light] = light.Range
 		table.insert(restoreFunctions, function()
 			light.Brightness = originalBrightness
+			light.Range = originalRanges[light]
 		end)
 	end
 
@@ -239,6 +243,7 @@ local function startFlashLoop(flashLights: { PointLight }, flashPart: BasePart?)
 	local function setFlash(brightness: number)
 		for _, light in flashLights do
 			light.Brightness = brightness
+			light.Range = if brightness > 0 then FLASH_RANGE else originalRanges[light]
 		end
 		if flashPart and originalPartColor then
 			flashPart.Color = if brightness > 0 then originalPartColor :: Color3 else Color3.new(0, 0, 0)
