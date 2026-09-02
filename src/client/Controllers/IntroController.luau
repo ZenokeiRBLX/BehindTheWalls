@@ -21,13 +21,12 @@ local GLITCH_MAX_DELAY = 10
 local STATIC_FLICKER_MIN = 0.5
 local STATIC_FLICKER_MAX = 0.7
 local TAP_PULSE_TIME = 1.1
-local FOV_MIN = 54
-local FOV_MAX = 68
-local FOV_CHANGE_MIN = 2
-local FOV_CHANGE_MAX = 5
-local FOV_LERP_SPEED = 1.5
-local LOGO_SHAKE_PIXELS = 2
-local LOGO_SHAKE_ROTATION = 0.6
+local FOV_MIN = 56
+local FOV_MAX = 67
+local FOV_DRIFT_MIN = 6
+local FOV_DRIFT_MAX = 11
+local LOGO_SHAKE_PIXELS = 1
+local LOGO_SHAKE_ROTATION = 0.2
 local FADE_OUT_TIME = 0.6
 local TRANSITION_IN_TIME = 0.35
 local TRANSITION_OUT_TIME = 0.8
@@ -59,9 +58,11 @@ local function startCamera(camPart: BasePart)
 	local startCam = Workspace.CurrentCamera
 	savedFov = startCam and startCam.FieldOfView or 70
 	local currentFov = savedFov :: number
-	local targetFov = currentFov
+	local fovStart = currentFov
+	local fovTarget = currentFov
 	local clock = 0
-	local nextFovChange = 0
+	local fovStartTime = 0
+	local fovEndTime = 0
 	RunService:BindToRenderStep(CAMERA_BIND, Enum.RenderPriority.Camera.Value + 1, function(deltaTime)
 		local camera = Workspace.CurrentCamera
 		if not camera then
@@ -70,11 +71,16 @@ local function startCamera(camPart: BasePart)
 		camera.CameraType = Enum.CameraType.Scriptable
 
 		clock += deltaTime
-		if clock >= nextFovChange then
-			targetFov = FOV_MIN + math.random() * (FOV_MAX - FOV_MIN)
-			nextFovChange = clock + FOV_CHANGE_MIN + math.random() * (FOV_CHANGE_MAX - FOV_CHANGE_MIN)
+		if clock >= fovEndTime then
+			fovStart = currentFov
+			fovTarget = FOV_MIN + math.random() * (FOV_MAX - FOV_MIN)
+			fovStartTime = clock
+			fovEndTime = clock + FOV_DRIFT_MIN + math.random() * (FOV_DRIFT_MAX - FOV_DRIFT_MIN)
 		end
-		currentFov += (targetFov - currentFov) * math.min(deltaTime * FOV_LERP_SPEED, 1)
+		local span = fovEndTime - fovStartTime
+		local progress = if span > 0 then math.clamp((clock - fovStartTime) / span, 0, 1) else 1
+		local eased = progress * progress * (3 - 2 * progress)
+		currentFov = fovStart + (fovTarget - fovStart) * eased
 		camera.FieldOfView = currentFov
 		local viewport = camera.ViewportSize
 		local target = Vector2.zero
@@ -165,7 +171,7 @@ local function runLogoShake(logo: ImageLabel)
 			logo.Position = basePosition
 				+ UDim2.fromOffset(math.random(-LOGO_SHAKE_PIXELS, LOGO_SHAKE_PIXELS), math.random(-LOGO_SHAKE_PIXELS, LOGO_SHAKE_PIXELS))
 			logo.Rotation = baseRotation + (math.random() - 0.5) * 2 * LOGO_SHAKE_ROTATION
-			task.wait(0.05 + math.random() * 0.06)
+			task.wait(0.15 + math.random() * 0.2)
 		end
 		logo.Position = basePosition
 		logo.Rotation = baseRotation
@@ -294,6 +300,7 @@ local function runIntro()
 
 	introActive = true
 	introGui.Enabled = true
+	IntroScene.setRevealed()
 
 	local activeTweens = {}
 	if vhs1 and vhs1:IsA("ImageLabel") then

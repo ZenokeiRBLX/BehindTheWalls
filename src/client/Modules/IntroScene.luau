@@ -5,8 +5,8 @@ local Workspace = game:GetService("Workspace")
 
 local IntroScene = {}
 
-local MOSS_SWAY_SPEED = 0.7
-local MOSS_SWAY_ANGLE = math.rad(1.6)
+local MOSS_SWAY_SPEED = 0.9
+local MOSS_SWAY_ANGLE = math.rad(4.5)
 local BEAM_FLICKER_MIN_WAIT = 0.08
 local BEAM_FLICKER_MAX_WAIT = 0.35
 local BEAM_DROPOUT_CHANCE = 0.18
@@ -17,9 +17,32 @@ local FLASH_PULSES_MAX = 4
 local FLASH_BRIGHTNESS = 6
 local FLASH_ON_MIN = 0.2
 local FLASH_ON_MAX = 0.45
-local TWITCH_INTERVAL_MIN = 1.5
-local TWITCH_INTERVAL_MAX = 4
-local TWITCH_DECAY = 6
+local POSES = {
+	{
+		{ pattern = "Head", angles = Vector3.new(0, 0, math.rad(35)) },
+		{ pattern = "Neck", angles = Vector3.new(0, 0, math.rad(15)) },
+		{ pattern = "Jaw", angles = Vector3.new(math.rad(20), 0, 0) },
+	},
+	{
+		{ pattern = "Head", angles = Vector3.new(math.rad(-30), 0, 0) },
+		{ pattern = "Neck", angles = Vector3.new(math.rad(-10), 0, 0) },
+		{ pattern = "Spine", angles = Vector3.new(math.rad(6), 0, 0) },
+	},
+	{
+		{ pattern = "Spine", angles = Vector3.new(math.rad(-10), 0, 0) },
+		{ pattern = "Head", angles = Vector3.new(math.rad(20), math.rad(25), 0) },
+		{ pattern = "Arm1", angles = Vector3.new(0, 0, math.rad(18)) },
+	},
+	{
+		{ pattern = "Head", angles = Vector3.new(0, math.rad(-40), 0) },
+		{ pattern = "Jaw", angles = Vector3.new(math.rad(40), 0, 0) },
+	},
+	{
+		{ pattern = "Neck", angles = Vector3.new(0, math.rad(30), math.rad(10)) },
+		{ pattern = "Hand", angles = Vector3.new(math.rad(-15), 0, 0) },
+		{ pattern = "Finger", angles = Vector3.new(math.rad(25), 0, 0) },
+	},
+}
 
 local EERIE_AMBIENT = Color3.fromRGB(130, 140, 130)
 local EERIE_FOG_COLOR = Color3.fromRGB(28, 34, 29)
@@ -44,10 +67,11 @@ type BoneState = {
 	phase: number,
 	speed: number,
 	weights: Vector3,
-	twitch: CFrame,
+	pose: CFrame,
 }
 
 local isActive = false
+local isRevealed = false
 local heartbeatConnection: RBXScriptConnection?
 local restoreFunctions: { () -> () } = {}
 
@@ -115,7 +139,7 @@ local function collectBones(rig: BasePart)
 				phase = math.random() * math.pi * 2,
 				speed = 0.4 + math.random() * 0.5,
 				weights = Vector3.new(math.random(), math.random(), math.random()).Unit,
-				twitch = CFrame.identity,
+				pose = CFrame.identity,
 			})
 			table.insert(restoreFunctions, function()
 				bone.Transform = originalTransform
@@ -124,15 +148,28 @@ local function collectBones(rig: BasePart)
 	end
 end
 
-local function joltBones(count: number, strength: number)
-	for _ = 1, count do
-		local state = boneStates[math.random(1, #boneStates)]
-		if state then
-			state.twitch = CFrame.Angles(
-				(math.random() - 0.5) * 2 * strength,
-				(math.random() - 0.5) * 2 * strength,
-				(math.random() - 0.5) * 2 * strength
-			)
+local lastPoseIndex = 0
+
+local function applyNextPose()
+	if #POSES == 0 or #boneStates == 0 then
+		return
+	end
+	local poseIndex = math.random(1, #POSES)
+	if #POSES > 1 then
+		while poseIndex == lastPoseIndex do
+			poseIndex = math.random(1, #POSES)
+		end
+	end
+	lastPoseIndex = poseIndex
+
+	local pose = POSES[poseIndex]
+	for _, state in boneStates do
+		state.pose = CFrame.identity
+		for _, entry in pose do
+			if string.find(state.bone.Name, entry.pattern) then
+				state.pose = CFrame.Angles(entry.angles.X, entry.angles.Y, entry.angles.Z)
+				break
+			end
 		end
 	end
 end
@@ -148,28 +185,14 @@ local function startHeartbeat()
 			moss.part.CFrame = moss.baseCFrame * CFrame.Angles(sway, 0, lean)
 		end
 
-		local decay = math.min(deltaTime * TWITCH_DECAY, 1)
 		for _, state in boneStates do
-			state.twitch = state.twitch:Lerp(CFrame.identity, decay)
 			local t = elapsed * state.speed + state.phase
 			local drift = CFrame.Angles(
 				math.sin(t) * state.amplitude * state.weights.X,
 				math.sin(t * 0.83 + 1.3) * state.amplitude * state.weights.Y,
 				math.sin(t * 0.67 + 2.6) * state.amplitude * state.weights.Z
 			)
-			state.bone.Transform = drift * state.twitch
-		end
-	end)
-end
-
-local function startTwitchLoop()
-	task.spawn(function()
-		while isActive do
-			task.wait(TWITCH_INTERVAL_MIN + math.random() * (TWITCH_INTERVAL_MAX - TWITCH_INTERVAL_MIN))
-			if not isActive then
-				break
-			end
-			joltBones(math.random(1, 3), math.rad(12))
+			state.bone.Transform = drift * state.pose
 		end
 	end)
 end
@@ -232,14 +255,14 @@ local function startFlashLoop(flashLights: { PointLight }, flashPart: BasePart?)
 			end
 			local pulses = math.random(FLASH_PULSES_MIN, FLASH_PULSES_MAX)
 			local flickerSound = SoundService:FindFirstChild("Light_Flicker")
-			if flickerSound and flickerSound:IsA("Sound") then
+			if isRevealed and flickerSound and flickerSound:IsA("Sound") then
 				flickerSound:Play()
 			end
+			applyNextPose()
 			for _ = 1, pulses do
 				if not isActive then
 					break
 				end
-				joltBones(math.random(5, 10), math.rad(25))
 				setFlash(FLASH_BRIGHTNESS)
 				if boiledOne then
 					boiledOne.Transparency = 0
@@ -287,7 +310,6 @@ function IntroScene.begin()
 			boiled.Transparency = originalTransparency
 		end)
 		collectBones(boiled)
-		startTwitchLoop()
 	end
 
 	local sewerLight = sewer:FindFirstChild("SEWERLIGHT")
@@ -314,11 +336,30 @@ function IntroScene.begin()
 	startHeartbeat()
 end
 
+function IntroScene.setRevealed()
+	if not isActive or isRevealed then
+		return
+	end
+	isRevealed = true
+
+	local ambience = SoundService:FindFirstChild("Sewer_Sound_Effect")
+	if ambience and ambience:IsA("Sound") then
+		local originalLooped = ambience.Looped
+		ambience.Looped = true
+		ambience:Play()
+		table.insert(restoreFunctions, function()
+			ambience:Stop()
+			ambience.Looped = originalLooped
+		end)
+	end
+end
+
 function IntroScene.finish()
 	if not isActive then
 		return
 	end
 	isActive = false
+	isRevealed = false
 
 	if heartbeatConnection then
 		heartbeatConnection:Disconnect()
