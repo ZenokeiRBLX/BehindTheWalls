@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repository. `CLAUDE.md` and `AGENT
 
 ## Project Overview
 
-`Behind Every Wall` (repo name `BehindTheWalls`) is a Roblox round-based hunter/runner game synced through Rojo. The source of truth for scripts, module code, generated networking code, and explicitly Rojo-owned JSON-backed instances is under `src`, with the Roblox hierarchy defined by `default.project.json`. Everything else in the place file (map, UI templates, `StarterGui`, `Workspace`) is Studio-owned and edited through Roblox Studio.
+`Behind Every Wall` (repo name `BehindTheWalls`) is a Roblox horror game synced through Rojo. The source of truth for scripts, module code, generated networking code, and explicitly Rojo-owned JSON-backed instances is under `src`, with the Roblox hierarchy defined by `default.project.json`. Everything else in the place file (map, UI templates, `StarterGui`, `Workspace`) is Studio-owned and edited through Roblox Studio.
 
 The architecture mirrors the `Me-OW!` skeleton (`../Me-OW`): ProfileStore persistence, Replica replication, Blink networking, and the system/controller registry pattern.
 
@@ -35,10 +35,10 @@ This file applies to the entire repository.
 ## Repository Layout
 
 - `src/server/Bootstrap.server.luau` is the server entry point; it starts `SystemRegistry`.
-- `src/server/Systems` contains server systems started by `SystemRegistry` (`DataSystem`, `MapSystem`, `RoundSystem`).
+- `src/server/Systems` contains server systems started by `SystemRegistry` (`DataSystem`).
 - `src/server/Modules` contains server-only services and helpers (`DataService`, `ProfileTemplate`, `ProfileStore`, `DataConfig`).
 - `src/client/Bootstrap.client.luau` is the client entry point; it starts `ControllerRegistry`.
-- `src/client/Controllers` contains client controllers started by `ControllerRegistry` (`PlayerDataController`, `HudController`).
+- `src/client/Controllers` contains client controllers started by `ControllerRegistry` (`PlayerDataController`).
 - `src/shared/Modules` contains modules shared by client and server (`Config`, `GameInfo`), synced to `ReplicatedStorage.Shared.Modules`.
 - `src/replicatedFirst/Loading_Handler` is the `ReplicatedFirst` intro/loading screen (script plus JSON-backed GUI).
 - `src/network/main.blink` is the Blink IDL source.
@@ -50,7 +50,7 @@ This file applies to the entire repository.
 
 - Prefer ModuleScripts for game logic. Keep Scripts and LocalScripts as thin bootstraps.
 - Server systems and client controllers expose `start()` and, when cleanup is needed, `stop()`.
-- When adding a server system, require it in `src/server/Systems/SystemRegistry.luau` and add it to `SYSTEMS`. Order matters: `DataSystem` starts first, `MapSystem` builds the arena before `RoundSystem` starts the round loop, and gameplay systems that read profiles come after `DataSystem`.
+- When adding a server system, require it in `src/server/Systems/SystemRegistry.luau` and add it to `SYSTEMS`. Order matters: `DataSystem` starts first and gameplay systems that read profiles come after it.
 - When adding a client controller, require it in `src/client/Controllers/ControllerRegistry.luau` and add it to `CONTROLLERS`.
 - Before writing new logic, look for an existing module that owns the behavior and extend it instead of duplicating it.
 - Guard repeated starts with an `isStarted` flag when the module owns connections, replicated state, or long-running tasks.
@@ -66,7 +66,6 @@ This file applies to the entire repository.
 - Keep data template changes backward-compatible and rely on reconcile paths for new fields.
 - Sanitize currency and numeric state on the server before writing to profiles or replicas.
 - Use Blink for all client-server gameplay networking. Never create raw `RemoteEvent` or `RemoteFunction` instances.
-- Round phase/timer updates flow through the `MatchState` Blink event (`RoundSystem` fires, `HudController` listens).
 - Define new typed networking contracts in `src/network/main.blink`, regenerate with the pinned Blink tool, and commit the generated `src/shared/Blink` modules together with the IDL change.
 - Do not manually edit generated Blink output.
 

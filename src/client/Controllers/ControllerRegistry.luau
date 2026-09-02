@@ -2,11 +2,9 @@ local ControllerRegistry = {}
 
 local Controllers = script.Parent
 local PlayerDataController = require(Controllers:WaitForChild("PlayerDataController"))
-local HudController = require(Controllers:WaitForChild("HudController"))
 
 local CONTROLLERS = {
 	PlayerDataController,
-	HudController,
 }
 
 function ControllerRegistry.start()

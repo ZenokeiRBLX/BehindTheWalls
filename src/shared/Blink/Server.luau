@@ -161,27 +161,9 @@ local Queue: any = {
 
 local SerdesEvent = "?"
 local SerdesThread: thread?
-export type MatchStateData = { phase: string, remaining: number }
-function SerdesFunctions.WriteEVENT_MatchState(Value: { phase: string, remaining: number }): ()
-	-- Allocate BLOCK: 5 bytes
-	local BLOCK_START = Allocate(5)
-	buffer.writeu8(SendBuffer, BLOCK_START + 0, 0)
-	local Length = #Value.phase
-	buffer.writeu16(SendBuffer, BLOCK_START + 1, Length)
-	Allocate(Length)
-	buffer.writestring(SendBuffer, SendOffset, Value.phase, Length)
-	buffer.writeu16(SendBuffer, BLOCK_START + 3, Value.remaining)
-end
-
 if not RunService:IsRunning() then
 	local NOOP = function() end
 	local Returns = table.freeze({
-	MatchState = {
-		Fire = NOOP,
-		FireAll = NOOP,
-		FireList = NOOP,
-		FireExcept = NOOP
-	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
 end
@@ -268,52 +250,6 @@ end)
 local Returns = table.freeze({
 	StepReplication = StepReplication,
 
-	MatchState = {
-		Fire = function(Player: Player, Value: { phase: string, remaining: number }): ()
-			Load(PlayersMap[Player])
-			SerdesFunctions.WriteEVENT_MatchState(Value)
-			PlayersMap[Player] = Save()
-		end,
-		FireAll = function(Value: { phase: string, remaining: number }): ()
-			Load()
-			SerdesFunctions.WriteEVENT_MatchState(Value)
-			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
-			for _, Player in Players:GetPlayers() do
-				Load(PlayersMap[Player])
-				local Position = Allocate(Size)
-				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
-				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
-				PlayersMap[Player] = Save()
-			end
-		end,
-		FireList = function(List: {Player}, Value: { phase: string, remaining: number }): ()
-			Load()
-			SerdesFunctions.WriteEVENT_MatchState(Value)
-			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
-			for _, Player in List do
-				Load(PlayersMap[Player])
-				local Position = Allocate(Size)
-				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
-				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
-				PlayersMap[Player] = Save()
-			end
-		end,
-		FireExcept = function(Except: Player, Value: { phase: string, remaining: number }): ()
-			Load()
-			SerdesFunctions.WriteEVENT_MatchState(Value)
-			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
-			for _, Player in Players:GetPlayers() do
-				if Player == Except then
-					continue
-				end
-				Load(PlayersMap[Player])
-				local Position = Allocate(Size)
-				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
-				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
-				PlayersMap[Player] = Save()
-			end
-		end,
-	},
 })
 type BLINK_EVENTS_SYMBOL = typeof(Returns)
 return Returns :: BLINK_EVENTS_SYMBOL

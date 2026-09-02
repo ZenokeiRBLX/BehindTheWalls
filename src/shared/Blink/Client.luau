@@ -160,24 +160,9 @@ local Queue: any = {
 
 local SerdesEvent = "?"
 local SerdesThread: thread?
-Queue.Reliable[0] = table.create(256)
-export type MatchStateData = { phase: string, remaining: number }
-function SerdesFunctions.ReadEVENT_MatchState(): ({ phase: string, remaining: number })
-	-- Read BLOCK: 4 bytes
-	local BLOCK_START = Read(4)
-	local Value = {} :: any
-	local Length = buffer.readu16(RecieveBuffer, BLOCK_START + 0)
-	Value.phase = buffer.readstring(RecieveBuffer, Read(Length), Length)
-	Value.remaining = buffer.readu16(RecieveBuffer, BLOCK_START + 2)
-	return Value
-end
-
 if not RunService:IsRunning() then
 	local NOOP = function() end
 	local Returns = table.freeze({
-	MatchState = {
-		On = NOOP
-	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
 end
@@ -220,17 +205,6 @@ Reliable.OnClientEvent:Connect(function(Buffer: buffer, Instances: {Instance})
 		-- Read BLOCK: 1 bytes
 		local BLOCK_START = Read(1)
 		local Index = buffer.readu8(RecieveBuffer, BLOCK_START + 0)
-		if Index == 0 then
-			local Value: { phase: string, remaining: number } = SerdesFunctions.ReadEVENT_MatchState()
-			if Events.Reliable[0] ~= nil then
-				task.spawn(Events.Reliable[0], Value)
-			else
-				if #Queue.Reliable[0] > 256 then
-					warn("[Blink]: Event queue of \"MatchState\" exceeded 256, did you forget to implement a listener?")
-				end
-				table.insert(Queue.Reliable[0], {Value} :: {any})
-			end
-		end
 	end
 end)
 Unreliable.OnClientEvent:Connect(function(Buffer: buffer, Instances: {Instance})
@@ -255,20 +229,6 @@ end)
 local Returns = table.freeze({
 	StepReplication = StepReplication,
 
-	MatchState = {
-		On = function(Listener: (Value: { phase: string, remaining: number }) -> ()): () -> ()
-			Events.Reliable[0] = Listener
-			for Index, Arguments in Queue.Reliable[0] do
-				task.spawn(Listener, table.unpack(Arguments))
-			end
-			Queue.Reliable[0] = {}
-			return function (): ()
-				if Events.Reliable[0] == Listener then
-					Events.Reliable[0] = nil
-				end
-			end
-		end
-	},
 })
 type BLINK_EVENTS_SYMBOL = typeof(Returns)
 return Returns :: BLINK_EVENTS_SYMBOL
