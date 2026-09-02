@@ -20,27 +20,24 @@ local FLASH_ON_TIME = 0.3
 local FLASH_OFF_TIME = 0.12
 local POSES = {
 	{
-		{ pattern = "Head", angles = Vector3.new(0, 0, math.rad(35)) },
-		{ pattern = "Neck", angles = Vector3.new(0, 0, math.rad(12)) },
-		{ pattern = "Jaw", angles = Vector3.new(math.rad(20), 0, 0) },
+		{ pattern = "Head", angles = Vector3.new(0, 0, math.rad(10)) },
+		{ pattern = "Jaw", angles = Vector3.new(math.rad(15), 0, 0) },
 	},
 	{
-		{ pattern = "Head", angles = Vector3.new(math.rad(-15), 0, 0) },
-		{ pattern = "Neck", angles = Vector3.new(math.rad(-6), 0, 0) },
-		{ pattern = "Jaw", angles = Vector3.new(math.rad(12), 0, 0) },
+		{ pattern = "Head", angles = Vector3.new(math.rad(-6), 0, 0) },
+		{ pattern = "Jaw", angles = Vector3.new(math.rad(8), 0, 0) },
 	},
 	{
-		{ pattern = "Head", angles = Vector3.new(math.rad(12), 0, math.rad(-15)) },
-		{ pattern = "Arm1", angles = Vector3.new(0, 0, math.rad(18)) },
+		{ pattern = "Head", angles = Vector3.new(math.rad(5), 0, math.rad(-8)) },
+		{ pattern = "Arm1", angles = Vector3.new(0, 0, math.rad(8)) },
 	},
 	{
-		{ pattern = "Head", angles = Vector3.new(0, 0, math.rad(-28)) },
-		{ pattern = "Jaw", angles = Vector3.new(math.rad(40), 0, 0) },
+		{ pattern = "Head", angles = Vector3.new(0, 0, math.rad(-10)) },
+		{ pattern = "Jaw", angles = Vector3.new(math.rad(22), 0, 0) },
 	},
 	{
-		{ pattern = "Neck", angles = Vector3.new(0, 0, math.rad(10)) },
-		{ pattern = "Hand", angles = Vector3.new(math.rad(-15), 0, 0) },
-		{ pattern = "Finger", angles = Vector3.new(math.rad(25), 0, 0) },
+		{ pattern = "Hand", angles = Vector3.new(math.rad(-10), 0, 0) },
+		{ pattern = "Finger", angles = Vector3.new(math.rad(18), 0, 0) },
 	},
 }
 
@@ -52,15 +49,15 @@ local EERIE_TINT = Color3.fromRGB(208, 224, 208)
 local BONE_AMPLITUDES = {
 	{ pattern = "Pelvis", amplitude = 0 },
 	{ pattern = "Spine", amplitude = 0 },
-	{ pattern = "Finger", amplitude = math.rad(7) },
-	{ pattern = "Jaw", amplitude = math.rad(9) },
-	{ pattern = "Head", amplitude = math.rad(5) },
-	{ pattern = "Neck", amplitude = math.rad(4) },
-	{ pattern = "Eye", amplitude = math.rad(3) },
-	{ pattern = "Arm", amplitude = math.rad(3) },
-	{ pattern = "Hand", amplitude = math.rad(4) },
+	{ pattern = "Finger", amplitude = math.rad(5) },
+	{ pattern = "Jaw", amplitude = math.rad(4) },
+	{ pattern = "Head", amplitude = math.rad(2) },
+	{ pattern = "Neck", amplitude = math.rad(1.5) },
+	{ pattern = "Eye", amplitude = math.rad(2) },
+	{ pattern = "Arm", amplitude = math.rad(2) },
+	{ pattern = "Hand", amplitude = math.rad(3) },
 }
-local DEFAULT_BONE_AMPLITUDE = math.rad(2.5)
+local DEFAULT_BONE_AMPLITUDE = math.rad(1.5)
 
 type BoneState = {
 	bone: Bone,
