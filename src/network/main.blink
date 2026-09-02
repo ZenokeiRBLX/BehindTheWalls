@@ -2,3 +2,9 @@ option ClientOutput = "../shared/Blink/Client.luau"
 option ServerOutput = "../shared/Blink/Server.luau"
 
 -- Define typed networking events and functions here, then regenerate with the pinned Blink tool.
+
+event RequestSpawn {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync
+}

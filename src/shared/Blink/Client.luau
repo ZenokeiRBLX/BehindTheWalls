@@ -160,9 +160,18 @@ local Queue: any = {
 
 local SerdesEvent = "?"
 local SerdesThread: thread?
+function SerdesFunctions.WriteEVENT_RequestSpawn(Value: nil): ()
+	-- Allocate BLOCK: 1 bytes
+	local BLOCK_START = Allocate(1)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 0)
+end
+
 if not RunService:IsRunning() then
 	local NOOP = function() end
 	local Returns = table.freeze({
+	RequestSpawn = {
+		Fire = NOOP
+	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
 end
@@ -229,6 +238,11 @@ end)
 local Returns = table.freeze({
 	StepReplication = StepReplication,
 
+	RequestSpawn = {
+		Fire = function(Value: nil): ()
+			SerdesFunctions.WriteEVENT_RequestSpawn(Value)
+		end
+	},
 })
 type BLINK_EVENTS_SYMBOL = typeof(Returns)
 return Returns :: BLINK_EVENTS_SYMBOL

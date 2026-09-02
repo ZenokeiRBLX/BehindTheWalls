@@ -1,8 +1,11 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+
+local Blink = require(ReplicatedStorage:WaitForChild("Blink"):WaitForChild("Client"))
 
 local IntroController = {}
 
@@ -213,7 +216,11 @@ local function runIntro()
 	waitForContinue()
 
 	introActive = false
+	Blink.RequestSpawn.Fire()
 	fadeOutIntro(introGui, activeTweens)
+	if not player.Character then
+		player.CharacterAdded:Wait()
+	end
 	stopCamera()
 end
 

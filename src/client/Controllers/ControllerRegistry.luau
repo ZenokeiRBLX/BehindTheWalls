@@ -3,10 +3,12 @@ local ControllerRegistry = {}
 local Controllers = script.Parent
 local PlayerDataController = require(Controllers:WaitForChild("PlayerDataController"))
 local IntroController = require(Controllers:WaitForChild("IntroController"))
+local MusicController = require(Controllers:WaitForChild("MusicController"))
 
 local CONTROLLERS = {
 	PlayerDataController,
 	IntroController,
+	MusicController,
 }
 
 function ControllerRegistry.start()
