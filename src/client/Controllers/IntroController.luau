@@ -28,6 +28,9 @@ local FOV_DRIFT_MIN = 6
 local FOV_DRIFT_MAX = 11
 local LOGO_SHAKE_PIXELS = 1
 local LOGO_SHAKE_ROTATION = 0.2
+local PARALLAX_LOGO_DEPTH = 14
+local PARALLAX_TAP_DEPTH = 8
+local PARALLAX_SMOOTHING = 4
 local FADE_OUT_TIME = 0.6
 local TRANSITION_IN_TIME = 0.35
 local TRANSITION_OUT_TIME = 0.8
@@ -118,7 +121,49 @@ local function stopCamera()
 	end
 end
 
-local function runGlitchLoop(label: GuiObject, transparencyProperty: string)
+type UiMotion = {
+	gui: GuiObject,
+	base: UDim2,
+	depth: number,
+	shake: Vector2,
+	glitch: Vector2,
+}
+
+local function createMotion(gui: GuiObject, depth: number): UiMotion
+	return {
+		gui = gui,
+		base = gui.Position,
+		depth = depth,
+		shake = Vector2.zero,
+		glitch = Vector2.zero,
+	}
+end
+
+local function startParallax(motions: { UiMotion }): RBXScriptConnection
+	local smooth = Vector2.zero
+	return RunService.RenderStepped:Connect(function(deltaTime)
+		local camera = Workspace.CurrentCamera
+		local target = Vector2.zero
+		if camera then
+			local viewport = camera.ViewportSize
+			if viewport.X > 0 and viewport.Y > 0 then
+				local mouse = UserInputService:GetMouseLocation()
+				target = Vector2.new(
+					math.clamp((mouse.X / viewport.X) * 2 - 1, -1, 1),
+					math.clamp((mouse.Y / viewport.Y) * 2 - 1, -1, 1)
+				)
+			end
+		end
+		smooth = smooth:Lerp(target, math.min(deltaTime * PARALLAX_SMOOTHING, 1))
+		for _, motion in motions do
+			local offset = motion.shake + motion.glitch
+			motion.gui.Position = motion.base
+				+ UDim2.fromOffset(-smooth.X * motion.depth + offset.X, -smooth.Y * motion.depth + offset.Y)
+		end
+	end)
+end
+
+local function runGlitchLoop(label: GuiObject, transparencyProperty: string, motion: UiMotion)
 	local target = label :: any
 	task.spawn(function()
 		while introActive do
@@ -126,12 +171,10 @@ local function runGlitchLoop(label: GuiObject, transparencyProperty: string)
 			if not introActive then
 				break
 			end
-			local basePosition = label.Position
-			local offsetY = math.random(-5, 5)
-			label.Position = basePosition + UDim2.fromOffset(0, offsetY)
+			motion.glitch = Vector2.new(0, math.random(-5, 5))
 			target[transparencyProperty] = math.random() * 0.3
 			task.wait(0.1)
-			label.Position = basePosition
+			motion.glitch = Vector2.zero
 			target[transparencyProperty] = 0
 		end
 	end)
@@ -164,17 +207,18 @@ local function runTapPulse(tapText: TextLabel)
 	return tween
 end
 
-local function runLogoShake(logo: ImageLabel)
-	local basePosition = logo.Position
+local function runLogoShake(logo: ImageLabel, motion: UiMotion)
 	local baseRotation = logo.Rotation
 	task.spawn(function()
 		while introActive do
-			logo.Position = basePosition
-				+ UDim2.fromOffset(math.random(-LOGO_SHAKE_PIXELS, LOGO_SHAKE_PIXELS), math.random(-LOGO_SHAKE_PIXELS, LOGO_SHAKE_PIXELS))
+			motion.shake = Vector2.new(
+				math.random(-LOGO_SHAKE_PIXELS, LOGO_SHAKE_PIXELS),
+				math.random(-LOGO_SHAKE_PIXELS, LOGO_SHAKE_PIXELS)
+			)
 			logo.Rotation = baseRotation + (math.random() - 0.5) * 2 * LOGO_SHAKE_ROTATION
 			task.wait(0.15 + math.random() * 0.2)
 		end
-		logo.Position = basePosition
+		motion.shake = Vector2.zero
 		logo.Rotation = baseRotation
 	end)
 end
@@ -187,6 +231,12 @@ local function waitForLoadingDone()
 	local elapsed = 0
 	while not player:GetAttribute(LOADING_DONE_ATTRIBUTE) and elapsed < LOADING_DONE_TIMEOUT do
 		elapsed += task.wait(0.1)
+	end
+end
+
+local function waitForLoadingScreenRemoved(playerGui: PlayerGui)
+	while playerGui:FindFirstChild("LoadingScreen") do
+		task.wait(0.1)
 	end
 end
 
@@ -304,6 +354,7 @@ local function runIntro()
 	IntroScene.setRevealed()
 
 	local activeTweens = {}
+	local motions: { UiMotion } = {}
 	if vhs1 and vhs1:IsA("ImageLabel") then
 		table.insert(activeTweens, runScanlineBob(vhs1))
 	end
@@ -311,15 +362,22 @@ local function runIntro()
 		runStaticFlicker(vhs2)
 	end
 	if tapText and tapText:IsA("TextLabel") then
+		local tapMotion = createMotion(tapText, PARALLAX_TAP_DEPTH)
+		table.insert(motions, tapMotion)
 		table.insert(activeTweens, runTapPulse(tapText))
-		runGlitchLoop(tapText, "TextTransparency")
+		runGlitchLoop(tapText, "TextTransparency", tapMotion)
 	end
 	if logo and logo:IsA("ImageLabel") then
-		runLogoShake(logo)
-		runGlitchLoop(logo, "ImageTransparency")
+		local logoMotion = createMotion(logo, PARALLAX_LOGO_DEPTH)
+		table.insert(motions, logoMotion)
+		runLogoShake(logo, logoMotion)
+		runGlitchLoop(logo, "ImageTransparency", logoMotion)
 	end
+	local parallaxConnection = startParallax(motions)
 
+	waitForLoadingScreenRemoved(playerGui)
 	waitForContinue()
+	parallaxConnection:Disconnect()
 
 	introActive = false
 	local removeTransition = playBlackTransition(playerGui)
