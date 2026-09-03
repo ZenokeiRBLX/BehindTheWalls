@@ -12,6 +12,7 @@ end)
 
 local ReplicatedFirst = game:GetService("ReplicatedFirst")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 -- Find the player and their screen
 local player = Players.LocalPlayer
@@ -82,6 +83,27 @@ task.spawn(function()
 	local yaw = math.rad(viewport:GetAttribute("CameraYaw") or 90)
 	local offset = CFrame.fromAxisAngle(Vector3.yAxis, yaw) * Vector3.new(0, height, -distance)
 	camera.CFrame = CFrame.lookAt(center + offset, center)
+
+	-- Make him actually tumble while he falls: a steady head-over-heels spin around the body's own
+	-- center (so he stays in frame) plus a gentle side-to-side wobble. TumbleSpeed is degrees per
+	-- second and TumbleWobble is the wobble angle in degrees, both attributes on the ViewportFrame.
+	local tumbleSpeed = math.rad(viewport:GetAttribute("TumbleSpeed") or 45)
+	local tumbleWobble = math.rad(viewport:GetAttribute("TumbleWobble") or 12)
+	local basePivot = rig:GetPivot()
+	local baseRotation = basePivot.Rotation
+	local centerOffset = basePivot:PointToObjectSpace(center)
+	local tumbleTime = 0
+	local tumbleConnection
+	tumbleConnection = RunService.RenderStepped:Connect(function(deltaTime)
+		if not preloadGui.Parent then
+			tumbleConnection:Disconnect()
+			return
+		end
+		tumbleTime += deltaTime
+		local spin = CFrame.Angles(tumbleTime * tumbleSpeed, 0, math.sin(tumbleTime * 0.7) * tumbleWobble)
+		local rotation = spin * baseRotation
+		rig:PivotTo(CFrame.new(center - rotation * centerOffset) * rotation)
+	end)
 
 	local humanoid = rig:FindFirstChildOfClass("Humanoid")
 	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
