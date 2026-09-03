@@ -20,20 +20,60 @@ local playerGui = player:WaitForChild("PlayerGui")  -- this is like their screen
 
 -- Show the preloading screen (the little falling character) straight away, on top of everything.
 -- It lives in StarterGui so it can be edited visually, but StarterGui only copies itself into PlayerGui
--- when the character spawns (which is after the intro), so we clone it ourselves. ReplicatedFirst is
--- checked first in case it ever gets moved back there.
-local preloadTemplate = ReplicatedFirst:FindFirstChild("PRELOADING") or StarterGui:WaitForChild("PRELOADING")
-local preloadGui = preloadTemplate:Clone()
+-- when the character spawns (which is after the intro), so we MOVE the original over ourselves.
+-- Moving instead of cloning matters: the GUI's contents (the rig, its parts, constraints) are still
+-- streaming in from the server at this point, and a clone would only copy what has arrived so far,
+-- while the moved instance keeps receiving the rest. ReplicatedFirst is checked first in case it
+-- ever gets moved back there.
+local preloadGui = ReplicatedFirst:FindFirstChild("PRELOADING") or StarterGui:WaitForChild("PRELOADING")
 preloadGui.Enabled = true
 preloadGui.ResetOnSpawn = false
 preloadGui.Parent = playerGui
 local preloadExiting = false -- flips true when the preloading screen starts fading away
 
--- The light above the falling character sits at half transparency
-local lightImage = preloadGui:FindFirstChild("Light_Falling")
-if lightImage and lightImage:IsA("ImageLabel") then
-	lightImage.ImageTransparency = 0.5
-end
+-- The light above the falling character flickers like a real bulb: it jitters between 0.8 and 0.9
+-- transparency with the odd sharper flash (it may still be replicating in when we get here)
+local LIGHT_FLICKER_MIN = 0.8
+local LIGHT_FLICKER_MAX = 0.9
+task.spawn(function()
+	local lightImage = preloadGui:WaitForChild("Light_Falling", 10)
+	if not lightImage or not lightImage:IsA("ImageLabel") then
+		return
+	end
+	while not preloadExiting and preloadGui.Parent do
+		local flicker = LIGHT_FLICKER_MIN + math.random() * (LIGHT_FLICKER_MAX - LIGHT_FLICKER_MIN)
+		if math.random() < 0.08 then
+			flicker = LIGHT_FLICKER_MIN -- a sharper flash every so often
+		end
+		lightImage.ImageTransparency = flicker
+		task.wait(0.04 + math.random() * 0.12)
+	end
+end)
+
+-- The hourglass wobbles like it is being nudged, winds up into a full spin that accelerates and
+-- settles, bounces to a stop, rests, and does it all again (it may still be replicating in too)
+task.spawn(function()
+	local hourGlass = preloadGui:WaitForChild("Hour_Glass", 10)
+	if not hourGlass or not hourGlass:IsA("GuiObject") then
+		return
+	end
+	local baseRotation = hourGlass.Rotation
+	local function spinTo(rotation, duration, style, direction)
+		local tween = ts:Create(hourGlass, TweenInfo.new(duration, style, direction), {Rotation = rotation})
+		tween:Play()
+		tween.Completed:Wait()
+	end
+	while not preloadExiting and preloadGui.Parent do
+		hourGlass.Rotation = baseRotation
+		spinTo(baseRotation - 10, 0.35, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- small nudge
+		spinTo(baseRotation + 14, 0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- rock back
+		spinTo(baseRotation - 18, 0.35, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- wind up
+		spinTo(baseRotation + 360, 1.4, Enum.EasingStyle.Quint, Enum.EasingDirection.InOut) -- full spin
+		spinTo(baseRotation + 354, 0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out) -- overshoot back
+		spinTo(baseRotation + 360, 0.6, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out) -- springy settle
+		task.wait(1.2)
+	end
+end)
 ReplicatedFirst:RemoveDefaultLoadingScreen() -- swap Roblox's default loading spinner for ours right away
 local preloadStart = os.clock()
 local PRELOAD_MIN_TIME = 2.5 -- keep the preloading screen up at least this long so the animation is seen
@@ -62,18 +102,37 @@ task.spawn(function()
 	local assets = ReplicatedStorage:WaitForChild("Assets", 10)
 	addWithDescendants(assets and assets:FindFirstChild("Animations"))
 	addWithDescendants(assets and assets:FindFirstChild("Sounds"))
-	ContentProvider:PreloadAsync(toPreload)
+	-- MainText reports real progress: each asset the preloader finishes bumps the counter
+	local mainText = preloadGui:WaitForChild("MainText", 10)
+	local loadedCount = 0
+	local function showProgress(suffix)
+		if mainText and mainText:IsA("TextLabel") then
+			mainText.Text = ("Loading... [Asset %d]%s"):format(loadedCount, suffix or "")
+		end
+	end
+	showProgress()
+	ContentProvider:PreloadAsync(toPreload, function()
+		loadedCount += 1
+		showProgress()
+	end)
+	showProgress(" Done")
 	preloadFinished = true
 end)
 
 -- Start the falling animation on the viewport character as soon as the animation asset replicates
 local fallingTrack
 task.spawn(function()
-	local viewport = preloadGui:FindFirstChild("ViewportFrame")
-	local worldModel = viewport and viewport:FindFirstChild("WorldModel")
-	local rig = worldModel and worldModel:FindFirstChild("Falling_Rig")
+	local viewport = preloadGui:WaitForChild("ViewportFrame", 15)
+	local worldModel = viewport and viewport:WaitForChild("WorldModel", 15)
+	local rig = worldModel and worldModel:WaitForChild("Falling_Rig", 15)
 	if not rig then
 		return
+	end
+
+	-- The rig's parts stream in piece by piece; wait for the initial replication to finish so we
+	-- pose, frame, and animate the complete character instead of half of one
+	if not game:IsLoaded() then
+		game.Loaded:Wait()
 	end
 
 	-- Lay the rig out for the fall (flat on his back by default).
@@ -111,10 +170,20 @@ task.spawn(function()
 	-- and FallDrop (how far down the screen he travels, in scale) are attributes on the ViewportFrame.
 	local fallDuration = viewport:GetAttribute("FallDuration") or 6
 	local fallStartScale = viewport:GetAttribute("FallStartScale") or 0.45
-	local fallEndScale = viewport:GetAttribute("FallEndScale") or 1.6
+	local fallEndScale = viewport:GetAttribute("FallEndScale") or 1.2
 	local fallDrop = viewport:GetAttribute("FallDrop") or 0.45
 	local designedSize = viewport.Size
 	local designedPosition = viewport.Position
+
+	-- He falls from the light down INTO the hourglass: its center is where the drop ends and it draws
+	-- on top of the viewport so he slips in behind the glass. FallDrop only applies if there is no
+	-- Hour_Glass to aim for.
+	local fallEndPosition = designedPosition + UDim2.fromScale(0, fallDrop)
+	local hourGlass = preloadGui:FindFirstChild("Hour_Glass")
+	if hourGlass and hourGlass:IsA("GuiObject") then
+		fallEndPosition = hourGlass.Position
+		hourGlass.ZIndex = viewport.ZIndex + 1
+	end
 
 	local tumbleTime = 0
 	local tumbleConnection
@@ -135,7 +204,7 @@ task.spawn(function()
 			designedSize.X.Scale * scale, designedSize.X.Offset * scale,
 			designedSize.Y.Scale * scale, designedSize.Y.Offset * scale
 		)
-		viewport.Position = designedPosition + UDim2.fromScale(0, fallDrop * progress)
+		viewport.Position = designedPosition:Lerp(fallEndPosition, progress)
 		local fadeIn = math.min(progress / 0.12, 1)
 		local fadeOut = math.min((1 - progress) / 0.15, 1)
 		viewport.ImageTransparency = 1 - math.min(fadeIn, fadeOut)
