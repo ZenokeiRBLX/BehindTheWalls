@@ -10,9 +10,35 @@ pcall(function()
 	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
 end)
 
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 -- Find the player and their screen
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")  -- this is like their screen
+
+-- Show the preloading screen (the little falling character) straight away, on top of everything
+local preloadGui = ReplicatedFirst:WaitForChild("PRELOADING")
+preloadGui.Parent = playerGui
+local preloadStart = os.clock()
+local PRELOAD_MIN_TIME = 2.5 -- keep the preloading screen up at least this long so the animation is seen
+
+-- Start the falling animation on the viewport character as soon as the animation asset replicates
+local fallingTrack
+task.spawn(function()
+	local viewport = preloadGui:FindFirstChild("ViewportFrame")
+	local worldModel = viewport and viewport:FindFirstChild("WorldModel")
+	local rig = worldModel and worldModel:FindFirstChild("Falling_Rig")
+	local humanoid = rig and rig:FindFirstChildOfClass("Humanoid")
+	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		return
+	end
+	local animation = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Animations"):WaitForChild("Rig"):WaitForChild("LoadFallingAnim")
+	fallingTrack = animator:LoadAnimation(animation)
+	fallingTrack.Looped = true
+	fallingTrack:Play()
+end)
 
 -- Grab our intro screen and put it on the player's screen so they can see it
 local introGui = script:WaitForChild("LoadingScreen")
@@ -23,8 +49,25 @@ local bgFrame = introGui:WaitForChild("BGFrame")
 local text = bgFrame:WaitForChild("mainText")
 local sound = bgFrame.textSound
 
--- Wait here until the whole game is ready
-repeat task.wait() until game:IsLoaded()
+-- Wait here until the whole game is ready (and the preloading screen has had its minimum time)
+repeat task.wait() until game:IsLoaded() and os.clock() - preloadStart >= PRELOAD_MIN_TIME
+
+-- Fade the preloading screen away to reveal the credits waiting underneath
+local preloadFade = TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+local preloadFrame = preloadGui:FindFirstChild("Frame")
+local preloadViewport = preloadGui:FindFirstChild("ViewportFrame")
+if preloadFrame then
+	ts:Create(preloadFrame, preloadFade, {BackgroundTransparency = 1}):Play()
+end
+if preloadViewport then
+	ts:Create(preloadViewport, preloadFade, {ImageTransparency = 1}):Play()
+end
+task.delay(1.1, function()
+	if fallingTrack then
+		fallingTrack:Stop()
+	end
+	preloadGui:Destroy()
+end)
 
 -- Make the special camera effects ourselves, so the game stays normal until the intro starts
 local colorCorrection = Instance.new("ColorCorrectionEffect")
