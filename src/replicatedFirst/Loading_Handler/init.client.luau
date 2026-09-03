@@ -18,9 +18,22 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")  -- this is like their screen
 
--- Show the preloading screen (the little falling character) straight away, on top of everything
-local preloadGui = ReplicatedFirst:WaitForChild("PRELOADING")
+-- Show the preloading screen (the little falling character) straight away, on top of everything.
+-- It lives in StarterGui so it can be edited visually, but StarterGui only copies itself into PlayerGui
+-- when the character spawns (which is after the intro), so we clone it ourselves. ReplicatedFirst is
+-- checked first in case it ever gets moved back there.
+local preloadTemplate = ReplicatedFirst:FindFirstChild("PRELOADING") or StarterGui:WaitForChild("PRELOADING")
+local preloadGui = preloadTemplate:Clone()
+preloadGui.Enabled = true
+preloadGui.ResetOnSpawn = false
 preloadGui.Parent = playerGui
+local preloadExiting = false -- flips true when the preloading screen starts fading away
+
+-- The light above the falling character sits at half transparency
+local lightImage = preloadGui:FindFirstChild("Light_Falling")
+if lightImage and lightImage:IsA("ImageLabel") then
+	lightImage.ImageTransparency = 0.5
+end
 ReplicatedFirst:RemoveDefaultLoadingScreen() -- swap Roblox's default loading spinner for ours right away
 local preloadStart = os.clock()
 local PRELOAD_MIN_TIME = 2.5 -- keep the preloading screen up at least this long so the animation is seen
@@ -92,10 +105,21 @@ task.spawn(function()
 	local basePivot = rig:GetPivot()
 	local baseRotation = basePivot.Rotation
 	local centerOffset = basePivot:PointToObjectSpace(center)
+	-- The fall itself: the viewport starts small up by the light, then slowly drops and grows as he
+	-- falls toward the screen, fading in at the top and out at the bottom before starting over.
+	-- FallDuration (seconds), FallStartScale / FallEndScale (relative to the viewport's designed size),
+	-- and FallDrop (how far down the screen he travels, in scale) are attributes on the ViewportFrame.
+	local fallDuration = viewport:GetAttribute("FallDuration") or 6
+	local fallStartScale = viewport:GetAttribute("FallStartScale") or 0.45
+	local fallEndScale = viewport:GetAttribute("FallEndScale") or 1.6
+	local fallDrop = viewport:GetAttribute("FallDrop") or 0.45
+	local designedSize = viewport.Size
+	local designedPosition = viewport.Position
+
 	local tumbleTime = 0
 	local tumbleConnection
 	tumbleConnection = RunService.RenderStepped:Connect(function(deltaTime)
-		if not preloadGui.Parent then
+		if preloadExiting or not preloadGui.Parent then
 			tumbleConnection:Disconnect()
 			return
 		end
@@ -103,6 +127,18 @@ task.spawn(function()
 		local spin = CFrame.Angles(tumbleTime * tumbleSpeed, 0, math.sin(tumbleTime * 0.7) * tumbleWobble)
 		local rotation = spin * baseRotation
 		rig:PivotTo(CFrame.new(center - rotation * centerOffset) * rotation)
+
+		local progress = (tumbleTime % fallDuration) / fallDuration
+		local growth = progress * progress -- grows faster the closer he gets, like real perspective
+		local scale = fallStartScale + (fallEndScale - fallStartScale) * growth
+		viewport.Size = UDim2.new(
+			designedSize.X.Scale * scale, designedSize.X.Offset * scale,
+			designedSize.Y.Scale * scale, designedSize.Y.Offset * scale
+		)
+		viewport.Position = designedPosition + UDim2.fromScale(0, fallDrop * progress)
+		local fadeIn = math.min(progress / 0.12, 1)
+		local fadeOut = math.min((1 - progress) / 0.15, 1)
+		viewport.ImageTransparency = 1 - math.min(fadeIn, fadeOut)
 	end)
 
 	local humanoid = rig:FindFirstChildOfClass("Humanoid")
@@ -141,14 +177,16 @@ if PRELOAD_TESTING_MODE then
 end
 
 -- Fade the preloading screen away to reveal the credits waiting underneath
+preloadExiting = true
 local preloadFade = TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
-local preloadFrame = preloadGui:FindFirstChild("Frame")
-local preloadViewport = preloadGui:FindFirstChild("ViewportFrame")
-if preloadFrame then
-	ts:Create(preloadFrame, preloadFade, {BackgroundTransparency = 1}):Play()
-end
-if preloadViewport then
-	ts:Create(preloadViewport, preloadFade, {ImageTransparency = 1}):Play()
+for _, element in preloadGui:GetDescendants() do
+	if element:IsA("ViewportFrame") then
+		ts:Create(element, preloadFade, {ImageTransparency = 1}):Play()
+	elseif element:IsA("ImageLabel") then
+		ts:Create(element, preloadFade, {ImageTransparency = 1, BackgroundTransparency = 1}):Play()
+	elseif element:IsA("Frame") then
+		ts:Create(element, preloadFade, {BackgroundTransparency = 1}):Play()
+	end
 end
 task.delay(1.1, function()
 	if fallingTrack then
