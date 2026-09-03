@@ -337,19 +337,19 @@ blur.Size = 0  -- start at 0 so it can smoothly grow in, instead of popping in a
 blur.Parent = Lighting
 
 -- Smoothly grow the vignette in (blur + saturation) instead of snapping to full strength instantly
-ts:Create(blur, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = 15}):Play()
-ts:Create(colorCorrection, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Saturation = -1}):Play()
+ts:Create(blur, TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = 15}):Play()
+ts:Create(colorCorrection, TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Saturation = -1}):Play()
 
 -- These control how smooth the fading looks
-local fadeIn = TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)  -- fading IN (appearing)
-local fadeOut = TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.In)  -- fading OUT (disappearing)
+local fadeIn = TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)  -- fading IN (appearing)
+local fadeOut = TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In)  -- fading OUT (disappearing)
 
 -- This is our own mini-tool: it fades out old text, puts in new text, then fades it back in
 local function showLine(newText)
 	if text.TextTransparency < 1 then
 		-- fade the old words away first
 		ts:Create(text, fadeOut, {TextTransparency = 1}):Play()
-		task.wait(0.9)
+		task.wait(0.55)
 	end
 	text.Text = newText -- change the words
 	ts:Create(text, fadeIn, {TextTransparency = 0}):Play() -- fade the new words in
@@ -371,8 +371,8 @@ local CREDIT_LINES = {
 local LINE_CUE_TIMES = {nil, nil, nil, nil, nil}
 local HIT_THRESHOLD = 350 -- PlaybackLoudness runs 0-1000; lower this if lines never trigger, raise it if they trigger on every beat
 local HIT_JUMP = 1.3 -- how much louder than a moment ago counts as a hit (1.3 = 30% louder)
-local HIT_MIN_GAP = 2.4
-local HIT_MAX_WAIT = 5
+local HIT_MIN_GAP = 1.6
+local HIT_MAX_WAIT = 3
 
 local function waitForCue(index)
 	local cueTime = LINE_CUE_TIMES[index]
@@ -399,7 +399,7 @@ end
 text.TextTransparency = 1
 
 -- Slowly turn the background dark gray
-ts:Create(bgFrame, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundColor3 = Color3.fromRGB(17,17,17)}):Play()
+ts:Create(bgFrame, TweenInfo.new(1.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundColor3 = Color3.fromRGB(17,17,17)}):Play()
 
 if not game:IsLoaded() then
 	game.Loaded:Wait()
@@ -412,31 +412,31 @@ for index, line in CREDIT_LINES do
 	waitForCue(index)
 	showLine(line)
 end
-task.wait(3.2) -- let the last line sit for a bit
+task.wait(2) -- let the last line sit for a bit
 
 -- Turn the background all the way black
-ts:Create(bgFrame, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundColor3 = Color3.fromRGB(0,0,0)}):Play()
+ts:Create(bgFrame, TweenInfo.new(1.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundColor3 = Color3.fromRGB(0,0,0)}):Play()
 
 -- Make the last words fade away
-ts:Create(text, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {TextTransparency = 1}):Play()
+ts:Create(text, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {TextTransparency = 1}):Play()
 
 -- Fade the sound out smoothly instead of cutting off abruptly
-ts:Create(sound, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Volume = 0}):Play()
+ts:Create(sound, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Volume = 0}):Play()
 
-task.wait(2.5) -- wait for those to finish
+task.wait(1.5) -- wait for those to finish
 
 -- Tell the intro screen we're done, so it can appear underneath before we fade away
 player:SetAttribute("LoadingScreenDone", true)
 
-ts:Create(bgFrame.vignette, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency = 1}):Play()
+ts:Create(bgFrame.vignette, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {ImageTransparency = 1}):Play()
 -- Make the whole box disappear
-ts:Create(bgFrame, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency = 1}):Play()
+ts:Create(bgFrame, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency = 1}):Play()
 
 -- Slowly undo the special camera effects so the game looks normal again, with a smoother ease
-ts:Create(colorCorrection, TweenInfo.new(2.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Saturation = 0}):Play()
-ts:Create(blur, TweenInfo.new(2.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Size = 1}):Play()
+ts:Create(colorCorrection, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Saturation = 0}):Play()
+ts:Create(blur, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Size = 1}):Play()
 
-task.wait(5) -- wait a bit more
+task.wait(2) -- wait a bit more
 
 introGui:Destroy() -- get rid of the intro screen, we don't need it anymore
 sound:Stop() -- make sure it's fully stopped (Volume 0 doesn't free it up)
