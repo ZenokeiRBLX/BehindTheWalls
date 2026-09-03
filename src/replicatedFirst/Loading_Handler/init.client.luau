@@ -31,10 +31,10 @@ preloadGui.ResetOnSpawn = false
 preloadGui.Parent = playerGui
 local preloadExiting = false -- flips true when the preloading screen starts fading away
 
--- The light shining down into the hole is steady: it only breathes very slowly between 0.8 and 0.9
+-- The light shining down into the hole is steady: it only breathes very slowly between 0.55 and 0.65
 -- transparency, like a distant lamp whose glow drifts a touch (it may still be replicating in)
-local LIGHT_STEADY_MIN = 0.8
-local LIGHT_STEADY_MAX = 0.9
+local LIGHT_STEADY_MIN = 0.55
+local LIGHT_STEADY_MAX = 0.65
 local LIGHT_BREATHE_SECONDS = 6
 task.spawn(function()
 	local lightImage = preloadGui:WaitForChild("Light_Falling", 10)
@@ -72,8 +72,8 @@ task.spawn(function()
 		spinning = true
 		task.spawn(function()
 			hourGlass.Rotation = baseRotation
-			spinTo(baseRotation - 12, 0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out) -- lean back
-			spinTo(baseRotation + 360, 1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- the flip
+			spinTo(baseRotation - 12, 0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.Out) -- lean back
+			spinTo(baseRotation + 360, 0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- the flip
 			hourGlass.Rotation = baseRotation
 			spinning = false
 		end)
@@ -165,7 +165,7 @@ task.spawn(function()
 	-- Make him actually tumble while he falls: a steady head-over-heels spin around the body's own
 	-- center (so he stays in frame) plus a gentle side-to-side wobble. TumbleSpeed is degrees per
 	-- second and TumbleWobble is the wobble angle in degrees, both attributes on the ViewportFrame.
-	local tumbleSpeed = math.rad(viewport:GetAttribute("TumbleSpeed") or 45)
+	local tumbleSpeed = math.rad(viewport:GetAttribute("TumbleSpeed") or 70)
 	local tumbleWobble = math.rad(viewport:GetAttribute("TumbleWobble") or 12)
 	local basePivot = rig:GetPivot()
 	local baseRotation = basePivot.Rotation
@@ -179,10 +179,10 @@ task.spawn(function()
 	--   4. REST:  a short beat, then he starts over from the light
 	-- FallDuration / FallStartScale / FallEndScale / FallEnterScale are attributes on the ViewportFrame;
 	-- FallDrop is only used if there is no Hour_Glass to aim for.
-	local FALL_ENTER_SECONDS = 0.45
-	local FALL_SPIN_SECONDS = 1.4
-	local FALL_REST_SECONDS = 0.5
-	local fallDuration = viewport:GetAttribute("FallDuration") or 6
+	local FALL_ENTER_SECONDS = 0.3
+	local FALL_SPIN_SECONDS = 1.0
+	local FALL_REST_SECONDS = 0.3
+	local fallDuration = viewport:GetAttribute("FallDuration") or 3.5
 	local fallStartScale = viewport:GetAttribute("FallStartScale") or 0.45
 	local fallEndScale = viewport:GetAttribute("FallEndScale") or 1.2
 	local fallEnterScale = viewport:GetAttribute("FallEnterScale") or 0.1
