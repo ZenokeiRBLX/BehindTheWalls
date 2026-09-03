@@ -58,7 +58,24 @@ task.spawn(function()
 	local viewport = preloadGui:FindFirstChild("ViewportFrame")
 	local worldModel = viewport and viewport:FindFirstChild("WorldModel")
 	local rig = worldModel and worldModel:FindFirstChild("Falling_Rig")
-	local humanoid = rig and rig:FindFirstChildOfClass("Humanoid")
+	if not rig then
+		return
+	end
+
+	-- Aim the viewport camera at wherever the rig currently is, so moving the rig in Studio never loses it.
+	-- Tweak the angle with the CameraDistance / CameraHeight / CameraYaw attributes on the ViewportFrame.
+	local camera = viewport.CurrentCamera or Instance.new("Camera")
+	camera.Name = "ViewportCamera"
+	camera.Parent = viewport
+	viewport.CurrentCamera = camera
+	local center = rig:GetBoundingBox().Position
+	local distance = viewport:GetAttribute("CameraDistance") or 6
+	local height = viewport:GetAttribute("CameraHeight") or 0.2
+	local yaw = math.rad(viewport:GetAttribute("CameraYaw") or 0)
+	local offset = CFrame.fromAxisAngle(Vector3.yAxis, yaw) * Vector3.new(0, height, -distance)
+	camera.CFrame = CFrame.lookAt(center + offset, center)
+
+	local humanoid = rig:FindFirstChildOfClass("Humanoid")
 	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
 	if not animator then
 		return
