@@ -31,22 +31,21 @@ preloadGui.ResetOnSpawn = false
 preloadGui.Parent = playerGui
 local preloadExiting = false -- flips true when the preloading screen starts fading away
 
--- The light above the falling character flickers like a real bulb: it jitters between 0.8 and 0.9
--- transparency with the odd sharper flash (it may still be replicating in when we get here)
-local LIGHT_FLICKER_MIN = 0.8
-local LIGHT_FLICKER_MAX = 0.9
+-- The light shining down into the hole is steady: it only breathes very slowly between 0.8 and 0.9
+-- transparency, like a distant lamp whose glow drifts a touch (it may still be replicating in)
+local LIGHT_STEADY_MIN = 0.8
+local LIGHT_STEADY_MAX = 0.9
+local LIGHT_BREATHE_SECONDS = 6
 task.spawn(function()
 	local lightImage = preloadGui:WaitForChild("Light_Falling", 10)
 	if not lightImage or not lightImage:IsA("ImageLabel") then
 		return
 	end
+	local startTime = os.clock()
 	while not preloadExiting and preloadGui.Parent do
-		local flicker = LIGHT_FLICKER_MIN + math.random() * (LIGHT_FLICKER_MAX - LIGHT_FLICKER_MIN)
-		if math.random() < 0.08 then
-			flicker = LIGHT_FLICKER_MIN -- a sharper flash every so often
-		end
-		lightImage.ImageTransparency = flicker
-		task.wait(0.04 + math.random() * 0.12)
+		local breathe = (math.sin((os.clock() - startTime) / LIGHT_BREATHE_SECONDS * math.pi * 2) + 1) / 2
+		lightImage.ImageTransparency = LIGHT_STEADY_MIN + (LIGHT_STEADY_MAX - LIGHT_STEADY_MIN) * breathe
+		task.wait(0.1)
 	end
 end)
 
@@ -65,13 +64,11 @@ task.spawn(function()
 	end
 	while not preloadExiting and preloadGui.Parent do
 		hourGlass.Rotation = baseRotation
-		spinTo(baseRotation - 10, 0.35, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- small nudge
-		spinTo(baseRotation + 14, 0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- rock back
-		spinTo(baseRotation - 18, 0.35, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- wind up
-		spinTo(baseRotation + 360, 1.4, Enum.EasingStyle.Quint, Enum.EasingDirection.InOut) -- full spin
-		spinTo(baseRotation + 354, 0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out) -- overshoot back
-		spinTo(baseRotation + 360, 0.6, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out) -- springy settle
-		task.wait(1.2)
+		spinTo(baseRotation - 8, 0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- gentle lean
+		spinTo(baseRotation + 10, 1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- easy sway back
+		spinTo(baseRotation - 12, 1.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- slow wind up
+		spinTo(baseRotation + 360, 2.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- one smooth full turn
+		task.wait(1.5)
 	end
 end)
 ReplicatedFirst:RemoveDefaultLoadingScreen() -- swap Roblox's default loading spinner for ours right away
@@ -105,9 +102,9 @@ task.spawn(function()
 	-- MainText reports real progress: each asset the preloader finishes bumps the counter
 	local mainText = preloadGui:WaitForChild("MainText", 10)
 	local loadedCount = 0
-	local function showProgress(suffix)
+	local function showProgress()
 		if mainText and mainText:IsA("TextLabel") then
-			mainText.Text = ("Loading... [Asset %d]%s"):format(loadedCount, suffix or "")
+			mainText.Text = ("Loading... [Asset %d]"):format(loadedCount)
 		end
 	end
 	showProgress()
@@ -115,7 +112,6 @@ task.spawn(function()
 		loadedCount += 1
 		showProgress()
 	end)
-	showProgress(" Done")
 	preloadFinished = true
 end)
 
