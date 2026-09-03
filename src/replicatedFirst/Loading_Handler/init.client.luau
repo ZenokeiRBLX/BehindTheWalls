@@ -73,7 +73,7 @@ task.spawn(function()
 end)
 ReplicatedFirst:RemoveDefaultLoadingScreen() -- swap Roblox's default loading spinner for ours right away
 local preloadStart = os.clock()
-local PRELOAD_MIN_TIME = 2.5 -- keep the preloading screen up at least this long so the animation is seen
+local PRELOAD_MIN_TIME = 5 -- keep the preloading screen up at least this long so the animation is seen
 local PRELOAD_MAX_TIME = 20 -- don't hold the player forever if an asset refuses to load
 local PRELOAD_TESTING_MODE = false -- true = hold the preloading screen forever so it can be edited live; false = the real flow
 
