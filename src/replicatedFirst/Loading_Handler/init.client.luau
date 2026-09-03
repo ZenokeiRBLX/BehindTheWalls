@@ -20,8 +20,36 @@ local playerGui = player:WaitForChild("PlayerGui")  -- this is like their screen
 -- Show the preloading screen (the little falling character) straight away, on top of everything
 local preloadGui = ReplicatedFirst:WaitForChild("PRELOADING")
 preloadGui.Parent = playerGui
+ReplicatedFirst:RemoveDefaultLoadingScreen() -- swap Roblox's default loading spinner for ours right away
 local preloadStart = os.clock()
 local PRELOAD_MIN_TIME = 2.5 -- keep the preloading screen up at least this long so the animation is seen
+local PRELOAD_MAX_TIME = 20 -- don't hold the player forever if an asset refuses to load
+
+-- Actually preload the credits, intro screen, and intro sounds while the preloading screen is up,
+-- so nothing pops in late once the real loading screen and the intro start
+local ContentProvider = game:GetService("ContentProvider")
+local SoundService = game:GetService("SoundService")
+local preloadFinished = false
+task.spawn(function()
+	local toPreload = {}
+	local function addWithDescendants(root)
+		if not root then
+			return
+		end
+		table.insert(toPreload, root)
+		for _, descendant in root:GetDescendants() do
+			table.insert(toPreload, descendant)
+		end
+	end
+	addWithDescendants(script:WaitForChild("LoadingScreen"))
+	addWithDescendants(StarterGui:WaitForChild("Intro_Screen", 10))
+	addWithDescendants(SoundService)
+	local assets = ReplicatedStorage:WaitForChild("Assets", 10)
+	addWithDescendants(assets and assets:FindFirstChild("Animations"))
+	addWithDescendants(assets and assets:FindFirstChild("Sounds"))
+	ContentProvider:PreloadAsync(toPreload)
+	preloadFinished = true
+end)
 
 -- Start the falling animation on the viewport character as soon as the animation asset replicates
 local fallingTrack
@@ -49,8 +77,13 @@ local bgFrame = introGui:WaitForChild("BGFrame")
 local text = bgFrame:WaitForChild("mainText")
 local sound = bgFrame.textSound
 
--- Wait here until the whole game is ready (and the preloading screen has had its minimum time)
-repeat task.wait() until game:IsLoaded() and os.clock() - preloadStart >= PRELOAD_MIN_TIME
+-- Wait here until the whole game is ready, the assets are preloaded (or we hit the cap),
+-- and the preloading screen has had its minimum time on screen
+repeat
+	task.wait()
+until game:IsLoaded()
+	and os.clock() - preloadStart >= PRELOAD_MIN_TIME
+	and (preloadFinished or os.clock() - preloadStart >= PRELOAD_MAX_TIME)
 
 -- Fade the preloading screen away to reveal the credits waiting underneath
 local preloadFade = TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
