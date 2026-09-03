@@ -52,14 +52,15 @@ type TrackedCharacter = {
 }
 
 local isStarted = false
-local footstepsFolder: Folder?
+local footstepsFolder: Instance?
+local missingWarned: { [string]: boolean } = {}
 local tracked: { [Model]: TrackedCharacter } = {}
 local playerConnections: { [Player]: { RBXScriptConnection } } = {}
 local heartbeatConnection: RBXScriptConnection?
 local playerAddedConnection: RBXScriptConnection?
 local playerRemovingConnection: RBXScriptConnection?
 
-local function resolveFootstepsFolder(): Folder?
+local function resolveFootstepsFolder(): Instance?
 	local assets = ReplicatedStorage:WaitForChild("Assets", 30)
 	if not assets then
 		return nil
@@ -68,14 +69,24 @@ local function resolveFootstepsFolder(): Folder?
 	if not sounds then
 		return nil
 	end
-	local folder = sounds:WaitForChild("Footsteps", 30)
-	if folder and folder:IsA("Folder") then
-		return folder
-	end
-	return nil
+	return sounds:WaitForChild("Footsteps", 30)
 end
 
-local function findMaterialFolder(material: Enum.Material): Instance?
+local function collectSounds(container: Instance): { Sound }
+	local found = {}
+	if container:IsA("Sound") then
+		table.insert(found, container)
+		return found
+	end
+	for _, descendant in container:GetDescendants() do
+		if descendant:IsA("Sound") then
+			table.insert(found, descendant)
+		end
+	end
+	return found
+end
+
+local function findMaterialContainer(material: Enum.Material): Instance?
 	local folder = footstepsFolder
 	if not folder then
 		return nil
@@ -99,22 +110,24 @@ local function findMaterialFolder(material: Enum.Material): Instance?
 		end
 	end
 
-	return folder:GetChildren()[1]
+	return folder
 end
 
 local function pickVariant(material: Enum.Material): Sound?
-	local materialFolder = findMaterialFolder(material)
-	if not materialFolder then
+	local container = findMaterialContainer(material)
+	if not container then
 		return nil
 	end
 
-	local variants = {}
-	for _, child in materialFolder:GetChildren() do
-		if child:IsA("Sound") then
-			table.insert(variants, child)
-		end
+	local variants = collectSounds(container)
+	if #variants == 0 and container ~= footstepsFolder and footstepsFolder then
+		variants = collectSounds(footstepsFolder)
 	end
 	if #variants == 0 then
+		if not missingWarned[material.Name] then
+			missingWarned[material.Name] = true
+			warn(("FootstepsController found no Sound for material %s under %s"):format(material.Name, container:GetFullName()))
+		end
 		return nil
 	end
 	return variants[math.random(1, #variants)]
@@ -144,12 +157,15 @@ local function isWithinRange(rootPart: BasePart): boolean
 	return offset:Dot(offset) <= CULL_DISTANCE_SQ
 end
 
-local function isGrounded(humanoid: Humanoid): boolean
+local function isWalking(humanoid: Humanoid, rootPart: BasePart): boolean
 	if humanoid.FloorMaterial == Enum.Material.Air then
 		return false
 	end
-	local state = humanoid:GetState()
-	return state == Enum.HumanoidStateType.Running or state == Enum.HumanoidStateType.RunningNoPhysics
+	if humanoid.MoveDirection.Magnitude <= 0 then
+		return false
+	end
+	local velocity = rootPart.AssemblyLinearVelocity
+	return Vector3.new(velocity.X, 0, velocity.Z).Magnitude >= MIN_MOVE_SPEED
 end
 
 local function playStep(entry: TrackedCharacter)
@@ -246,14 +262,8 @@ local function onHeartbeat()
 		local delta = position - entry.lastPosition
 		entry.lastPosition = position
 
-		if not isGrounded(entry.humanoid) then
+		if not isWalking(entry.humanoid, rootPart) then
 			entry.distanceSinceStep = 0
-			continue
-		end
-
-		local velocity = rootPart.AssemblyLinearVelocity
-		local flatSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
-		if flatSpeed < MIN_MOVE_SPEED then
 			continue
 		end
 
@@ -301,6 +311,11 @@ function FootstepsController.start()
 			warn("FootstepsController could not find ReplicatedStorage.Assets.Sounds.Footsteps")
 			return
 		end
+		local containerNames = {}
+		for _, child in footstepsFolder:GetChildren() do
+			table.insert(containerNames, ("%s(%s)"):format(child.Name, child.ClassName))
+		end
+		print(("FootstepsController ready: %d sounds across [%s]"):format(#collectSounds(footstepsFolder), table.concat(containerNames, ", ")))
 
 		for _, player in Players:GetPlayers() do
 			onPlayerAdded(player)
