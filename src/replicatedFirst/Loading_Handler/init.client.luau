@@ -62,8 +62,16 @@ task.spawn(function()
 		return
 	end
 
+	-- Lay the rig out for the fall (flat on his back by default).
+	-- Tweak the pose with the RigPitch / RigYaw / RigRoll attributes (degrees) on the ViewportFrame.
+	local rigPitch = math.rad(viewport:GetAttribute("RigPitch") or 90)
+	local rigYaw = math.rad(viewport:GetAttribute("RigYaw") or 0)
+	local rigRoll = math.rad(viewport:GetAttribute("RigRoll") or 0)
+	rig:PivotTo(CFrame.new(rig:GetPivot().Position) * CFrame.fromOrientation(rigPitch, rigYaw, rigRoll))
+
 	-- Aim the viewport camera at wherever the rig currently is, so moving the rig in Studio never loses it.
-	-- Tweak the angle with the CameraDistance / CameraHeight / CameraYaw attributes on the ViewportFrame.
+	-- Tweak the angle with the CameraDistance / CameraHeight / CameraYaw attributes on the ViewportFrame
+	-- (CameraYaw 90 = side profile view).
 	local camera = viewport.CurrentCamera or Instance.new("Camera")
 	camera.Name = "ViewportCamera"
 	camera.Parent = viewport
@@ -71,7 +79,7 @@ task.spawn(function()
 	local center = rig:GetBoundingBox().Position
 	local distance = viewport:GetAttribute("CameraDistance") or 6
 	local height = viewport:GetAttribute("CameraHeight") or 0.2
-	local yaw = math.rad(viewport:GetAttribute("CameraYaw") or 0)
+	local yaw = math.rad(viewport:GetAttribute("CameraYaw") or 90)
 	local offset = CFrame.fromAxisAngle(Vector3.yAxis, yaw) * Vector3.new(0, height, -distance)
 	camera.CFrame = CFrame.lookAt(center + offset, center)
 
