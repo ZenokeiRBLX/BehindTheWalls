@@ -75,7 +75,7 @@ ReplicatedFirst:RemoveDefaultLoadingScreen() -- swap Roblox's default loading sp
 local preloadStart = os.clock()
 local PRELOAD_MIN_TIME = 2.5 -- keep the preloading screen up at least this long so the animation is seen
 local PRELOAD_MAX_TIME = 20 -- don't hold the player forever if an asset refuses to load
-local PRELOAD_TESTING_MODE = true -- true = hold the preloading screen forever so it can be edited live; set false for the real flow
+local PRELOAD_TESTING_MODE = false -- true = hold the preloading screen forever so it can be edited live; false = the real flow
 
 -- Actually preload the credits, intro screen, and intro sounds while the preloading screen is up,
 -- so nothing pops in late once the real loading screen and the intro start
@@ -168,6 +168,10 @@ task.spawn(function()
 	local fallStartScale = viewport:GetAttribute("FallStartScale") or 0.45
 	local fallEndScale = viewport:GetAttribute("FallEndScale") or 1.2
 	local fallDrop = viewport:GetAttribute("FallDrop") or 0.45
+	-- Once he is FallShrinkStart of the way down he shrinks toward FallEnterScale, as if going into
+	-- the hourglass, and fades away right as he reaches it
+	local fallShrinkStart = viewport:GetAttribute("FallShrinkStart") or 0.7
+	local fallEnterScale = viewport:GetAttribute("FallEnterScale") or 0.1
 	local designedSize = viewport.Size
 	local designedPosition = viewport.Position
 
@@ -194,15 +198,23 @@ task.spawn(function()
 		rig:PivotTo(CFrame.new(center - rotation * centerOffset) * rotation)
 
 		local progress = (tumbleTime % fallDuration) / fallDuration
-		local growth = progress * progress -- grows faster the closer he gets, like real perspective
-		local scale = fallStartScale + (fallEndScale - fallStartScale) * growth
+		local scale
+		if progress < fallShrinkStart then
+			local growProgress = progress / fallShrinkStart
+			local growth = growProgress * growProgress -- grows faster the closer he gets, like real perspective
+			scale = fallStartScale + (fallEndScale - fallStartScale) * growth
+		else
+			local shrinkProgress = (progress - fallShrinkStart) / (1 - fallShrinkStart)
+			local shrink = shrinkProgress * shrinkProgress -- slips into the glass faster and faster
+			scale = fallEndScale + (fallEnterScale - fallEndScale) * shrink
+		end
 		viewport.Size = UDim2.new(
 			designedSize.X.Scale * scale, designedSize.X.Offset * scale,
 			designedSize.Y.Scale * scale, designedSize.Y.Offset * scale
 		)
 		viewport.Position = designedPosition:Lerp(fallEndPosition, progress)
 		local fadeIn = math.min(progress / 0.12, 1)
-		local fadeOut = math.min((1 - progress) / 0.15, 1)
+		local fadeOut = math.min((1 - progress) / 0.08, 1) -- only vanish at the very end, after the shrink
 		viewport.ImageTransparency = 1 - math.min(fadeIn, fadeOut)
 	end)
 
@@ -251,6 +263,8 @@ for _, element in preloadGui:GetDescendants() do
 		ts:Create(element, preloadFade, {ImageTransparency = 1, BackgroundTransparency = 1}):Play()
 	elseif element:IsA("Frame") then
 		ts:Create(element, preloadFade, {BackgroundTransparency = 1}):Play()
+	elseif element:IsA("TextLabel") then
+		ts:Create(element, preloadFade, {TextTransparency = 1, TextStrokeTransparency = 1}):Play()
 	end
 end
 task.delay(1.1, function()
