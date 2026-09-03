@@ -24,6 +24,7 @@ ReplicatedFirst:RemoveDefaultLoadingScreen() -- swap Roblox's default loading sp
 local preloadStart = os.clock()
 local PRELOAD_MIN_TIME = 2.5 -- keep the preloading screen up at least this long so the animation is seen
 local PRELOAD_MAX_TIME = 20 -- don't hold the player forever if an asset refuses to load
+local PRELOAD_TESTING_MODE = true -- true = hold the preloading screen forever so it can be edited live; set false for the real flow
 
 -- Actually preload the credits, intro screen, and intro sounds while the preloading screen is up,
 -- so nothing pops in late once the real loading screen and the intro start
@@ -84,6 +85,13 @@ repeat
 until game:IsLoaded()
 	and os.clock() - preloadStart >= PRELOAD_MIN_TIME
 	and (preloadFinished or os.clock() - preloadStart >= PRELOAD_MAX_TIME)
+
+-- TESTING MODE: park here forever so the preloading screen stays up for live editing
+if PRELOAD_TESTING_MODE then
+	while true do
+		task.wait(1)
+	end
+end
 
 -- Fade the preloading screen away to reveal the credits waiting underneath
 local preloadFade = TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
