@@ -49,9 +49,9 @@ task.spawn(function()
 	end
 end)
 
--- The hourglass spins when the character drops into it: a quick lean back, then one smooth full
--- turn, like an hourglass being flipped. The fall loop below calls spinHourGlass at that moment.
--- (The hourglass may still be replicating in when we get here.)
+-- The hourglass flips when the character drops into it: one smooth full turn from wherever its
+-- lean left it. The fall loop below leans it gradually as he approaches, then calls spinHourGlass
+-- the moment he is in. (The hourglass may still be replicating in when we get here.)
 local spinHourGlass = nil
 task.spawn(function()
 	local hourGlass = preloadGui:WaitForChild("Hour_Glass", 10)
@@ -71,8 +71,6 @@ task.spawn(function()
 		end
 		spinning = true
 		task.spawn(function()
-			hourGlass.Rotation = baseRotation
-			spinTo(baseRotation - 12, 0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.Out) -- lean back
 			spinTo(baseRotation + 360, 0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- the flip
 			hourGlass.Rotation = baseRotation
 			spinning = false
@@ -194,12 +192,15 @@ task.spawn(function()
 	-- and where he enters to: its center. The hourglass draws on top so he slips in behind the glass.
 	local fallTopPosition = designedPosition + UDim2.fromScale(0, fallDrop)
 	local fallEnterPosition = fallTopPosition
+	local HOURGLASS_LEAN_DEGREES = 14 -- how far the hourglass tips back as he closes in on it
 	local hourGlass = preloadGui:FindFirstChild("Hour_Glass")
+	local hourGlassBaseRotation = 0
 	if hourGlass and hourGlass:IsA("GuiObject") then
 		local viewportEndHeight = designedSize.Y.Scale * fallEndScale
 		fallTopPosition = hourGlass.Position - UDim2.fromScale(0, hourGlass.Size.Y.Scale / 2 + viewportEndHeight * 0.25)
 		fallEnterPosition = hourGlass.Position
 		hourGlass.ZIndex = viewport.ZIndex + 1
+		hourGlassBaseRotation = hourGlass.Rotation
 	end
 
 	local function applyViewport(position, scale, transparency)
@@ -240,6 +241,10 @@ task.spawn(function()
 			local scale = fallStartScale + (fallEndScale - fallStartScale) * growth
 			local fadeIn = math.min(progress / 0.12, 1)
 			applyViewport(designedPosition:Lerp(fallTopPosition, progress), scale, 1 - fadeIn)
+			if hourGlass then
+				-- tips back more and more the closer he gets, ready for the flip
+				hourGlass.Rotation = hourGlassBaseRotation - HOURGLASS_LEAN_DEGREES * (progress * progress)
+			end
 		elseif cycleTime < fallDuration + FALL_ENTER_SECONDS then
 			local progress = (cycleTime - fallDuration) / FALL_ENTER_SECONDS
 			local dive = progress * progress -- drops into the glass faster and faster
@@ -340,7 +345,7 @@ local fadeIn = TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.Ou
 local fadeOut = TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.In)  -- fading OUT (disappearing)
 
 -- This is our own mini-tool: it fades out old text, puts in new text, then fades it back in
-local function showLine(newText, holdTime)
+local function showLine(newText)
 	if text.TextTransparency < 1 then
 		-- fade the old words away first
 		ts:Create(text, fadeOut, {TextTransparency = 1}):Play()
@@ -348,7 +353,46 @@ local function showLine(newText, holdTime)
 	end
 	text.Text = newText -- change the words
 	ts:Create(text, fadeIn, {TextTransparency = 0}):Play() -- fade the new words in
-	task.wait(holdTime) -- leave them on screen for a bit
+end
+
+-- The credit lines, and how each one is timed to the music:
+--  * LINE_CUE_TIMES: exact seconds into the track for each line. Fill one in once you know where a
+--    high note lands and that line will appear right on it. A nil entry uses the hit detector.
+--  * Hit detector: the next line appears when the music's loudness suddenly jumps above HIT_THRESHOLD
+--    (the accented, higher-toned hits), but never sooner than HIT_MIN_GAP seconds after the previous
+--    line so the words stay readable, and never later than HIT_MAX_WAIT so it can't stall.
+local CREDIT_LINES = {
+	"Compact alliance presents to you",
+	"Behind Every Wall",
+	"Produced by Jxsonxn and Zenokei",
+	"2 Extremely hard working developers",
+	"Enjoy.",
+}
+local LINE_CUE_TIMES = {nil, nil, nil, nil, nil}
+local HIT_THRESHOLD = 350 -- PlaybackLoudness runs 0-1000; lower this if lines never trigger, raise it if they trigger on every beat
+local HIT_JUMP = 1.3 -- how much louder than a moment ago counts as a hit (1.3 = 30% louder)
+local HIT_MIN_GAP = 2.4
+local HIT_MAX_WAIT = 5
+
+local function waitForCue(index)
+	local cueTime = LINE_CUE_TIMES[index]
+	if cueTime then
+		repeat
+			task.wait()
+		until sound.TimePosition >= cueTime or not sound.IsPlaying
+		return
+	end
+	local startedAt = os.clock()
+	local lastLoudness = sound.PlaybackLoudness
+	while os.clock() - startedAt < HIT_MAX_WAIT do
+		local loudness = sound.PlaybackLoudness
+		local gapPassed = os.clock() - startedAt >= HIT_MIN_GAP
+		if gapPassed and loudness >= HIT_THRESHOLD and loudness >= lastLoudness * HIT_JUMP then
+			return
+		end
+		lastLoudness = loudness
+		task.wait(0.03)
+	end
 end
 
 -- Start with no words showing
@@ -362,14 +406,13 @@ if not game:IsLoaded() then
 end
 
 sound:Play() -- start the loading screen music
-task.wait(2.5) -- wait a bit before words show up
 
--- Show each line, one after another
-showLine("Compact alliance presents to you", 3)
-showLine("Behind Every Wall", 3.2)
-showLine("Produced by Jxsonxn and Zenokei", 3.2)
-showLine("2 Extremely hard working developers", 3.2)
-showLine("Enjoy.", 3.2)
+-- Show each line when the music cues it
+for index, line in CREDIT_LINES do
+	waitForCue(index)
+	showLine(line)
+end
+task.wait(3.2) -- let the last line sit for a bit
 
 -- Turn the background all the way black
 ts:Create(bgFrame, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundColor3 = Color3.fromRGB(0,0,0)}):Play()
