@@ -49,26 +49,34 @@ task.spawn(function()
 	end
 end)
 
--- The hourglass wobbles like it is being nudged, winds up into a full spin that accelerates and
--- settles, bounces to a stop, rests, and does it all again (it may still be replicating in too)
+-- The hourglass spins when the character drops into it: a quick lean back, then one smooth full
+-- turn, like an hourglass being flipped. The fall loop below calls spinHourGlass at that moment.
+-- (The hourglass may still be replicating in when we get here.)
+local spinHourGlass = nil
 task.spawn(function()
 	local hourGlass = preloadGui:WaitForChild("Hour_Glass", 10)
 	if not hourGlass or not hourGlass:IsA("GuiObject") then
 		return
 	end
 	local baseRotation = hourGlass.Rotation
+	local spinning = false
 	local function spinTo(rotation, duration, style, direction)
 		local tween = ts:Create(hourGlass, TweenInfo.new(duration, style, direction), {Rotation = rotation})
 		tween:Play()
 		tween.Completed:Wait()
 	end
-	while not preloadExiting and preloadGui.Parent do
-		hourGlass.Rotation = baseRotation
-		spinTo(baseRotation - 8, 0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- gentle lean
-		spinTo(baseRotation + 10, 1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- easy sway back
-		spinTo(baseRotation - 12, 1.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- slow wind up
-		spinTo(baseRotation + 360, 2.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- one smooth full turn
-		task.wait(1.5)
+	spinHourGlass = function()
+		if spinning then
+			return
+		end
+		spinning = true
+		task.spawn(function()
+			hourGlass.Rotation = baseRotation
+			spinTo(baseRotation - 12, 0.25, Enum.EasingStyle.Sine, Enum.EasingDirection.Out) -- lean back
+			spinTo(baseRotation + 360, 1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut) -- the flip
+			hourGlass.Rotation = baseRotation
+			spinning = false
+		end)
 	end
 end)
 ReplicatedFirst:RemoveDefaultLoadingScreen() -- swap Roblox's default loading spinner for ours right away
@@ -117,6 +125,8 @@ end)
 
 -- Start the falling animation on the viewport character as soon as the animation asset replicates
 local fallingTrack
+local fallRunning = false -- true once the fall loop is driving the viewport
+local fallCyclesDone = 0 -- counts every time he has fully dropped into the hourglass
 task.spawn(function()
 	local viewport = preloadGui:WaitForChild("ViewportFrame", 15)
 	local worldModel = viewport and viewport:WaitForChild("WorldModel", 15)
@@ -160,33 +170,53 @@ task.spawn(function()
 	local basePivot = rig:GetPivot()
 	local baseRotation = basePivot.Rotation
 	local centerOffset = basePivot:PointToObjectSpace(center)
-	-- The fall itself: the viewport starts small up by the light, then slowly drops and grows as he
-	-- falls toward the screen, fading in at the top and out at the bottom before starting over.
-	-- FallDuration (seconds), FallStartScale / FallEndScale (relative to the viewport's designed size),
-	-- and FallDrop (how far down the screen he travels, in scale) are attributes on the ViewportFrame.
+	-- The fall itself, in phases that repeat:
+	--   1. FALL:  he starts small up by the light and drops toward the TOP of the hourglass, growing
+	--             as he gets closer (FallDuration seconds, FallStartScale -> FallEndScale)
+	--   2. ENTER: the moment he reaches the top of the glass he shrinks quickly down into it
+	--             (FALL_ENTER_SECONDS, down to FallEnterScale) and disappears
+	--   3. SPIN:  the hourglass flips in response while he is inside
+	--   4. REST:  a short beat, then he starts over from the light
+	-- FallDuration / FallStartScale / FallEndScale / FallEnterScale are attributes on the ViewportFrame;
+	-- FallDrop is only used if there is no Hour_Glass to aim for.
+	local FALL_ENTER_SECONDS = 0.45
+	local FALL_SPIN_SECONDS = 1.4
+	local FALL_REST_SECONDS = 0.5
 	local fallDuration = viewport:GetAttribute("FallDuration") or 6
 	local fallStartScale = viewport:GetAttribute("FallStartScale") or 0.45
 	local fallEndScale = viewport:GetAttribute("FallEndScale") or 1.2
-	local fallDrop = viewport:GetAttribute("FallDrop") or 0.45
-	-- Once he is FallShrinkStart of the way down he shrinks toward FallEnterScale, as if going into
-	-- the hourglass, and fades away right as he reaches it
-	local fallShrinkStart = viewport:GetAttribute("FallShrinkStart") or 0.7
 	local fallEnterScale = viewport:GetAttribute("FallEnterScale") or 0.1
+	local fallDrop = viewport:GetAttribute("FallDrop") or 0.45
 	local designedSize = viewport.Size
 	local designedPosition = viewport.Position
 
-	-- He falls from the light down INTO the hourglass: its center is where the drop ends and it draws
-	-- on top of the viewport so he slips in behind the glass. FallDrop only applies if there is no
-	-- Hour_Glass to aim for.
-	local fallEndPosition = designedPosition + UDim2.fromScale(0, fallDrop)
+	-- Where the drop ends: the top edge of the hourglass (minus a bit so his feet touch it first),
+	-- and where he enters to: its center. The hourglass draws on top so he slips in behind the glass.
+	local fallTopPosition = designedPosition + UDim2.fromScale(0, fallDrop)
+	local fallEnterPosition = fallTopPosition
 	local hourGlass = preloadGui:FindFirstChild("Hour_Glass")
 	if hourGlass and hourGlass:IsA("GuiObject") then
-		fallEndPosition = hourGlass.Position
+		local viewportEndHeight = designedSize.Y.Scale * fallEndScale
+		fallTopPosition = hourGlass.Position - UDim2.fromScale(0, hourGlass.Size.Y.Scale / 2 + viewportEndHeight * 0.25)
+		fallEnterPosition = hourGlass.Position
 		hourGlass.ZIndex = viewport.ZIndex + 1
 	end
 
+	local function applyViewport(position, scale, transparency)
+		viewport.Position = position
+		viewport.Size = UDim2.new(
+			designedSize.X.Scale * scale, designedSize.X.Offset * scale,
+			designedSize.Y.Scale * scale, designedSize.Y.Offset * scale
+		)
+		viewport.ImageTransparency = transparency
+	end
+
+	local cycleLength = fallDuration + FALL_ENTER_SECONDS + FALL_SPIN_SECONDS + FALL_REST_SECONDS
 	local tumbleTime = 0
+	local lastCycleTime = 0
+	local spinTriggered = false
 	local tumbleConnection
+	fallRunning = true
 	tumbleConnection = RunService.RenderStepped:Connect(function(deltaTime)
 		if preloadExiting or not preloadGui.Parent then
 			tumbleConnection:Disconnect()
@@ -197,25 +227,34 @@ task.spawn(function()
 		local rotation = spin * baseRotation
 		rig:PivotTo(CFrame.new(center - rotation * centerOffset) * rotation)
 
-		local progress = (tumbleTime % fallDuration) / fallDuration
-		local scale
-		if progress < fallShrinkStart then
-			local growProgress = progress / fallShrinkStart
-			local growth = growProgress * growProgress -- grows faster the closer he gets, like real perspective
-			scale = fallStartScale + (fallEndScale - fallStartScale) * growth
-		else
-			local shrinkProgress = (progress - fallShrinkStart) / (1 - fallShrinkStart)
-			local shrink = shrinkProgress * shrinkProgress -- slips into the glass faster and faster
-			scale = fallEndScale + (fallEnterScale - fallEndScale) * shrink
+		local cycleTime = tumbleTime % cycleLength
+		if cycleTime < lastCycleTime then
+			fallCyclesDone += 1 -- a full fall, entry, and flip just finished; he restarts from the light
+			spinTriggered = false
 		end
-		viewport.Size = UDim2.new(
-			designedSize.X.Scale * scale, designedSize.X.Offset * scale,
-			designedSize.Y.Scale * scale, designedSize.Y.Offset * scale
-		)
-		viewport.Position = designedPosition:Lerp(fallEndPosition, progress)
-		local fadeIn = math.min(progress / 0.12, 1)
-		local fadeOut = math.min((1 - progress) / 0.08, 1) -- only vanish at the very end, after the shrink
-		viewport.ImageTransparency = 1 - math.min(fadeIn, fadeOut)
+		lastCycleTime = cycleTime
+
+		if cycleTime < fallDuration then
+			local progress = cycleTime / fallDuration
+			local growth = progress * progress -- grows faster the closer he gets, like real perspective
+			local scale = fallStartScale + (fallEndScale - fallStartScale) * growth
+			local fadeIn = math.min(progress / 0.12, 1)
+			applyViewport(designedPosition:Lerp(fallTopPosition, progress), scale, 1 - fadeIn)
+		elseif cycleTime < fallDuration + FALL_ENTER_SECONDS then
+			local progress = (cycleTime - fallDuration) / FALL_ENTER_SECONDS
+			local dive = progress * progress -- drops into the glass faster and faster
+			local scale = fallEndScale + (fallEnterScale - fallEndScale) * dive
+			local fadeOut = math.clamp((progress - 0.7) / 0.3, 0, 1) -- only vanish at the very end
+			applyViewport(fallTopPosition:Lerp(fallEnterPosition, dive), scale, fadeOut)
+		else
+			applyViewport(fallEnterPosition, fallEnterScale, 1)
+			if not spinTriggered then
+				spinTriggered = true
+				if spinHourGlass then
+					spinHourGlass()
+				end
+			end
+		end
 	end)
 
 	local humanoid = rig:FindFirstChildOfClass("Humanoid")
@@ -251,6 +290,15 @@ if PRELOAD_TESTING_MODE then
 	while true do
 		task.wait(1)
 	end
+end
+
+-- Let him finish his current fall into the hourglass before we move on, so he is never cut off mid-air
+if fallRunning then
+	local cyclesAtReady = fallCyclesDone
+	local waitStart = os.clock()
+	repeat
+		task.wait()
+	until fallCyclesDone > cyclesAtReady or os.clock() - waitStart > 10
 end
 
 -- Fade the preloading screen away to reveal the credits waiting underneath
