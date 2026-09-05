@@ -3,6 +3,7 @@ local Players = game:GetService("Players")       -- tool to find the player
 local ts = game:GetService("TweenService")       -- tool that makes things fade/move smoothly
 local Lighting = game:GetService("Lighting")     -- tool to control lighting effects
 local StarterGui = game:GetService("StarterGui") -- tool to control the built-in Roblox UI
+local UserInputService = game:GetService("UserInputService") -- tool to notice taps and clicks
 
 -- Hide the Roblox UI (player list, chat, backpack...) until the intro is fully over;
 -- the intro screen turns it back on after the player taps to continue
@@ -281,6 +282,19 @@ introGui.Parent = playerGui
 local bgFrame = introGui:WaitForChild("BGFrame")
 local text = bgFrame:WaitForChild("mainText")
 local sound = bgFrame.textSound
+local skipText = bgFrame:FindFirstChild("Load_Skip_Text") -- "tap to skip" hint, shown after the title line
+
+-- Once the skip hint is showing, any tap or click ends the credits early
+local skipAllowed = false
+local skipRequested = false
+local skipConnection = UserInputService.InputBegan:Connect(function(input)
+	if not skipAllowed or skipRequested then
+		return
+	end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		skipRequested = true
+	end
+end)
 
 -- Wait here until the whole game is ready, the assets are preloaded (or we hit the cap),
 -- and the preloading screen has had its minimum time on screen
@@ -359,7 +373,7 @@ local CREDIT_LINES = {
 	"2 Extremely hard working developers",
 	"Enjoy.",
 }
-local LINE_CUE_TIMES = {2.10, 5.74, 10.18, 13.60, 18.16}
+local LINE_CUE_TIMES = {2.10, 5.90, 10.18, 13.84, 18.16}
 local HIT_THRESHOLD = 350 -- PlaybackLoudness runs 0-1000; lower this if lines never trigger, raise it if they trigger on every beat
 local HIT_JUMP = 1.3 -- how much louder than a moment ago counts as a hit (1.3 = 30% louder)
 local HIT_MIN_GAP = 1.6
@@ -370,12 +384,12 @@ local function waitForCue(index)
 	if cueTime then
 		repeat
 			task.wait()
-		until sound.TimePosition >= cueTime or not sound.IsPlaying
+		until sound.TimePosition >= cueTime or not sound.IsPlaying or skipRequested
 		return
 	end
 	local startedAt = os.clock()
 	local lastLoudness = sound.PlaybackLoudness
-	while os.clock() - startedAt < HIT_MAX_WAIT do
+	while os.clock() - startedAt < HIT_MAX_WAIT and not skipRequested do
 		local loudness = sound.PlaybackLoudness
 		local gapPassed = os.clock() - startedAt >= HIT_MIN_GAP
 		if gapPassed and loudness >= HIT_THRESHOLD and loudness >= lastLoudness * HIT_JUMP then
@@ -407,10 +421,25 @@ sound:Play() -- start the loading screen music
 
 -- Show each line when the music cues it
 for index, line in CREDIT_LINES do
+	if skipRequested then
+		break -- the player tapped to skip, stop showing lines
+	end
 	waitForCue(index)
 	showLine(line)
+	if index == 2 and skipText and skipText:IsA("TextLabel") then
+		-- The title has landed; from here on the player may tap to skip the rest
+		skipText.TextTransparency = 0
+		skipAllowed = true
+	end
 end
-task.wait(2) -- let the last line sit for a bit
+local holdStart = os.clock()
+repeat
+	task.wait()
+until os.clock() - holdStart >= 2 or skipRequested -- let the last line sit for a bit, unless skipped
+skipConnection:Disconnect()
+if skipText then
+	skipText.TextTransparency = 1 -- hide the hint as the credits wrap up
+end
 
 -- Turn the background all the way black
 ts:Create(bgFrame, TweenInfo.new(1.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundColor3 = Color3.fromRGB(0,0,0)}):Play()
