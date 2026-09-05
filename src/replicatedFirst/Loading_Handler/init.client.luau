@@ -340,19 +340,10 @@ blur.Parent = Lighting
 ts:Create(blur, TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = 15}):Play()
 ts:Create(colorCorrection, TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Saturation = -1}):Play()
 
--- These control how smooth the fading looks
-local fadeIn = TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)  -- fading IN (appearing)
-local fadeOut = TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In)  -- fading OUT (disappearing)
-
--- This is our own mini-tool: it fades out old text, puts in new text, then fades it back in
+-- This is our own mini-tool: it swaps the words in instantly (no fading), hard cut like a title card
 local function showLine(newText)
-	if text.TextTransparency < 1 then
-		-- fade the old words away first
-		ts:Create(text, fadeOut, {TextTransparency = 1}):Play()
-		task.wait(0.55)
-	end
 	text.Text = newText -- change the words
-	ts:Create(text, fadeIn, {TextTransparency = 0}):Play() -- fade the new words in
+	text.TextTransparency = 0 -- show them straight away
 end
 
 -- The credit lines, and how each one is timed to the music:
@@ -417,8 +408,8 @@ task.wait(2) -- let the last line sit for a bit
 -- Turn the background all the way black
 ts:Create(bgFrame, TweenInfo.new(1.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundColor3 = Color3.fromRGB(0,0,0)}):Play()
 
--- Make the last words fade away
-ts:Create(text, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {TextTransparency = 1}):Play()
+-- Cut the last words off instantly
+text.TextTransparency = 1
 
 -- Fade the sound out smoothly instead of cutting off abruptly
 ts:Create(sound, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Volume = 0}):Play()
