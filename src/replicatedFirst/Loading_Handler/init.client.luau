@@ -359,7 +359,7 @@ local CREDIT_LINES = {
 	"2 Extremely hard working developers",
 	"Enjoy.",
 }
-local LINE_CUE_TIMES = {36.30, 40.30, 44.30, 48.10, 52.30}
+local LINE_CUE_TIMES = {2.10, 5.74, 10.18, 13.60, 18.16}
 local HIT_THRESHOLD = 350 -- PlaybackLoudness runs 0-1000; lower this if lines never trigger, raise it if they trigger on every beat
 local HIT_JUMP = 1.3 -- how much louder than a moment ago counts as a hit (1.3 = 30% louder)
 local HIT_MIN_GAP = 1.6
@@ -396,9 +396,9 @@ if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
 
--- The track has a quiet 36 second intro before the big "dun dun" hits start, so we skip straight to
--- just before the first hit; the credit lines are pinned to the accent hits measured from the track
-local MUSIC_START_TIME = 35.6
+-- The credit lines are pinned to the high "dun dun" hits measured from the start of the track
+-- (the accent of each pair: 2.10, 5.74, 10.18, 13.60, 18.16); the music plays from the top
+local MUSIC_START_TIME = 0
 if not sound.IsLoaded then
 	sound.Loaded:Wait()
 end
