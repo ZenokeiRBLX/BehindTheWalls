@@ -160,10 +160,92 @@ local Queue: any = {
 
 local SerdesEvent = "?"
 local SerdesThread: thread?
+Queue.Reliable[4] = table.create(256)
+Queue.Reliable[5] = table.create(256)
+export type Difficulty = ("Easy" | "Normal" | "Hard")
+export type PartySettings = { maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean }
+export type PartyStateData = { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }
 function SerdesFunctions.WriteEVENT_RequestSpawn(Value: nil): ()
 	-- Allocate BLOCK: 1 bytes
 	local BLOCK_START = Allocate(1)
 	buffer.writeu8(SendBuffer, BLOCK_START + 0, 0)
+end
+
+function SerdesFunctions.WriteEVENT_PartySetSettings(Value: { maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean }): ()
+	-- Allocate BLOCK: 4 bytes
+	local BLOCK_START = Allocate(4)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 1)
+	buffer.writeu8(SendBuffer, BLOCK_START + 1, Value.maxSize)
+	if Value.difficulty == "Easy" then
+		buffer.writeu8(SendBuffer, BLOCK_START + 2, 0)
+	elseif Value.difficulty == "Normal" then
+		buffer.writeu8(SendBuffer, BLOCK_START + 2, 1)
+	elseif Value.difficulty == "Hard" then
+		buffer.writeu8(SendBuffer, BLOCK_START + 2, 2)
+	else
+		error(`Unexpected enum: {Value.difficulty}, expected one of "Easy" or "Normal" or "Hard".`)
+	end
+	buffer.writeu8(SendBuffer, BLOCK_START + 3, Value.friendsOnly and 1 or 0)
+end
+
+function SerdesFunctions.WriteEVENT_PartyLeave(Value: nil): ()
+	-- Allocate BLOCK: 1 bytes
+	local BLOCK_START = Allocate(1)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 2)
+end
+
+function SerdesFunctions.WriteEVENT_PartyStart(Value: nil): ()
+	-- Allocate BLOCK: 1 bytes
+	local BLOCK_START = Allocate(1)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 3)
+end
+
+function SerdesFunctions.ReadEVENT_PartyState(): ({ active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } })
+	-- Read BLOCK: 9 bytes
+	local BLOCK_START = Read(9)
+	local Value = {} :: any
+	Value.active = (buffer.readu8(RecieveBuffer, BLOCK_START + 0) == 1)
+	Value.isHost = (buffer.readu8(RecieveBuffer, BLOCK_START + 1) == 1)
+	Value.portalId = buffer.readu8(RecieveBuffer, BLOCK_START + 2)
+	Value.maxSize = buffer.readu8(RecieveBuffer, BLOCK_START + 3)
+	Value.difficulty = true :: any
+	local Index = buffer.readu8(RecieveBuffer, BLOCK_START + 4)
+	if Index == 0 then
+		Value.difficulty = "Easy"
+	elseif Index == 1 then
+		Value.difficulty = "Normal"
+	elseif Index == 2 then
+		Value.difficulty = "Hard"
+	else
+		error(`Unexpected enum: {Index}`)
+	end
+	Value.friendsOnly = (buffer.readu8(RecieveBuffer, BLOCK_START + 5) == 1)
+	Value.countdown = buffer.readu8(RecieveBuffer, BLOCK_START + 6)
+	-- START ARRAY
+	local Length = buffer.readu16(RecieveBuffer, BLOCK_START + 7)
+	if Length < 0 then error(`Expected "Length" to be larger than 0, got {Length} instead.`) end
+	if Length > 65535 then error(`Expected "Length" to be smaller than 65535, got {Length} instead.`) end
+	Value.members = table.create(Length)
+		-- Read BLOCK: 2 bytes
+	local ARRAY_START_1 = Read(2 * Length)
+	for Index = 1, Length do
+		-- Read 2
+		local OPERATION_OFFSET_0 = ARRAY_START_1
+		ARRAY_START_1 += 2
+		Length = buffer.readu16(RecieveBuffer, OPERATION_OFFSET_0)
+		local Item_1 = buffer.readstring(RecieveBuffer, Read(Length), Length)
+		table.insert(Value.members, Item_1)
+	end
+	-- END ARRAY
+	return Value
+end
+
+function SerdesFunctions.ReadEVENT_PartyMessage(): (string)
+	-- Read BLOCK: 2 bytes
+	local BLOCK_START = Read(2)
+	local Length = buffer.readu16(RecieveBuffer, BLOCK_START + 0)
+	local Value = buffer.readstring(RecieveBuffer, Read(Length), Length)
+	return Value
 end
 
 if not RunService:IsRunning() then
@@ -171,6 +253,21 @@ if not RunService:IsRunning() then
 	local Returns = table.freeze({
 	RequestSpawn = {
 		Fire = NOOP
+	},
+	PartySetSettings = {
+		Fire = NOOP
+	},
+	PartyLeave = {
+		Fire = NOOP
+	},
+	PartyStart = {
+		Fire = NOOP
+	},
+	PartyState = {
+		On = NOOP
+	},
+	PartyMessage = {
+		On = NOOP
 	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
@@ -214,6 +311,27 @@ Reliable.OnClientEvent:Connect(function(Buffer: buffer, Instances: {Instance})
 		-- Read BLOCK: 1 bytes
 		local BLOCK_START = Read(1)
 		local Index = buffer.readu8(RecieveBuffer, BLOCK_START + 0)
+		if Index == 4 then
+			local Value: { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } } = SerdesFunctions.ReadEVENT_PartyState()
+			if Events.Reliable[4] ~= nil then
+				task.spawn(Events.Reliable[4], Value)
+			else
+				if #Queue.Reliable[4] > 256 then
+					warn("[Blink]: Event queue of \"PartyState\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[4], {Value} :: {any})
+			end
+		elseif Index == 5 then
+			local Value: string = SerdesFunctions.ReadEVENT_PartyMessage()
+			if Events.Reliable[5] ~= nil then
+				task.spawn(Events.Reliable[5], Value)
+			else
+				if #Queue.Reliable[5] > 256 then
+					warn("[Blink]: Event queue of \"PartyMessage\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[5], {Value} :: {any})
+			end
+		end
 	end
 end)
 Unreliable.OnClientEvent:Connect(function(Buffer: buffer, Instances: {Instance})
@@ -241,6 +359,49 @@ local Returns = table.freeze({
 	RequestSpawn = {
 		Fire = function(Value: nil): ()
 			SerdesFunctions.WriteEVENT_RequestSpawn(Value)
+		end
+	},
+	PartySetSettings = {
+		Fire = function(Value: { maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean }): ()
+			SerdesFunctions.WriteEVENT_PartySetSettings(Value)
+		end
+	},
+	PartyLeave = {
+		Fire = function(Value: nil): ()
+			SerdesFunctions.WriteEVENT_PartyLeave(Value)
+		end
+	},
+	PartyStart = {
+		Fire = function(Value: nil): ()
+			SerdesFunctions.WriteEVENT_PartyStart(Value)
+		end
+	},
+	PartyState = {
+		On = function(Listener: (Value: { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }) -> ()): () -> ()
+			Events.Reliable[4] = Listener
+			for Index, Arguments in Queue.Reliable[4] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[4] = {}
+			return function (): ()
+				if Events.Reliable[4] == Listener then
+					Events.Reliable[4] = nil
+				end
+			end
+		end
+	},
+	PartyMessage = {
+		On = function(Listener: (Value: string) -> ()): () -> ()
+			Events.Reliable[5] = Listener
+			for Index, Arguments in Queue.Reliable[5] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[5] = {}
+			return function (): ()
+				if Events.Reliable[5] == Listener then
+					Events.Reliable[5] = nil
+				end
+			end
 		end
 	},
 })

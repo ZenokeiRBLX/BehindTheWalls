@@ -53,6 +53,9 @@
       "$ignoreUnknownInstances": true,
       "MenuPanels": {
         "$path": "src/client/Gui/MenuPanels.model.json"
+      },
+      "PartyGui": {
+        "$path": "src/client/Gui/PartyGui.model.json"
       }
     },
 

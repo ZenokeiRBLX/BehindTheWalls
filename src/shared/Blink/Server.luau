@@ -162,8 +162,88 @@ local Queue: any = {
 local SerdesEvent = "?"
 local SerdesThread: thread?
 Queue.Reliable[0] = table.create(256)
+Queue.Reliable[1] = table.create(256)
+Queue.Reliable[2] = table.create(256)
+Queue.Reliable[3] = table.create(256)
+export type Difficulty = ("Easy" | "Normal" | "Hard")
+export type PartySettings = { maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean }
+export type PartyStateData = { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }
 function SerdesFunctions.ReadEVENT_RequestSpawn(): (nil)
 	return nil
+end
+
+function SerdesFunctions.ReadEVENT_PartySetSettings(): ({ maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean })
+	-- Read BLOCK: 3 bytes
+	local BLOCK_START = Read(3)
+	local Value = {} :: any
+	Value.maxSize = buffer.readu8(RecieveBuffer, BLOCK_START + 0)
+	Value.difficulty = true :: any
+	local Index = buffer.readu8(RecieveBuffer, BLOCK_START + 1)
+	if Index == 0 then
+		Value.difficulty = "Easy"
+	elseif Index == 1 then
+		Value.difficulty = "Normal"
+	elseif Index == 2 then
+		Value.difficulty = "Hard"
+	else
+		error(`Unexpected enum: {Index}`)
+	end
+	Value.friendsOnly = (buffer.readu8(RecieveBuffer, BLOCK_START + 2) == 1)
+	return Value
+end
+
+function SerdesFunctions.ReadEVENT_PartyLeave(): (nil)
+	return nil
+end
+
+function SerdesFunctions.ReadEVENT_PartyStart(): (nil)
+	return nil
+end
+
+function SerdesFunctions.WriteEVENT_PartyState(Value: { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }): ()
+	-- Allocate BLOCK: 10 bytes
+	local BLOCK_START = Allocate(10)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 4)
+	buffer.writeu8(SendBuffer, BLOCK_START + 1, Value.active and 1 or 0)
+	buffer.writeu8(SendBuffer, BLOCK_START + 2, Value.isHost and 1 or 0)
+	buffer.writeu8(SendBuffer, BLOCK_START + 3, Value.portalId)
+	buffer.writeu8(SendBuffer, BLOCK_START + 4, Value.maxSize)
+	if Value.difficulty == "Easy" then
+		buffer.writeu8(SendBuffer, BLOCK_START + 5, 0)
+	elseif Value.difficulty == "Normal" then
+		buffer.writeu8(SendBuffer, BLOCK_START + 5, 1)
+	elseif Value.difficulty == "Hard" then
+		buffer.writeu8(SendBuffer, BLOCK_START + 5, 2)
+	else
+		error(`Unexpected enum: {Value.difficulty}, expected one of "Easy" or "Normal" or "Hard".`)
+	end
+	buffer.writeu8(SendBuffer, BLOCK_START + 6, Value.friendsOnly and 1 or 0)
+	buffer.writeu8(SendBuffer, BLOCK_START + 7, Value.countdown)
+	-- START ARRAY
+	buffer.writeu16(SendBuffer, BLOCK_START + 8, #Value.members)
+		-- Allocate BLOCK: 2 bytes
+	local ARRAY_START_1 = Allocate(2 * #Value.members)
+	for Index = 1, #Value.members do
+		local Item_1 = Value.members[Index]
+		local Length = #Item_1
+		-- Allocate 2
+		local OPERATION_OFFSET_0 = ARRAY_START_1
+		ARRAY_START_1 += 2
+		buffer.writeu16(SendBuffer, OPERATION_OFFSET_0, Length)
+		Allocate(Length)
+		buffer.writestring(SendBuffer, SendOffset, Item_1, Length)
+	end
+	-- END ARRAY
+end
+
+function SerdesFunctions.WriteEVENT_PartyMessage(Value: string): ()
+	-- Allocate BLOCK: 3 bytes
+	local BLOCK_START = Allocate(3)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 5)
+	local Length = #Value
+	buffer.writeu16(SendBuffer, BLOCK_START + 1, Length)
+	Allocate(Length)
+	buffer.writestring(SendBuffer, SendOffset, Value, Length)
 end
 
 if not RunService:IsRunning() then
@@ -171,6 +251,27 @@ if not RunService:IsRunning() then
 	local Returns = table.freeze({
 	RequestSpawn = {
 		On = NOOP
+	},
+	PartySetSettings = {
+		On = NOOP
+	},
+	PartyLeave = {
+		On = NOOP
+	},
+	PartyStart = {
+		On = NOOP
+	},
+	PartyState = {
+		Fire = NOOP,
+		FireAll = NOOP,
+		FireList = NOOP,
+		FireExcept = NOOP
+	},
+	PartyMessage = {
+		Fire = NOOP,
+		FireAll = NOOP,
+		FireList = NOOP,
+		FireExcept = NOOP
 	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
@@ -244,6 +345,36 @@ Reliable.OnServerEvent:Connect(function(Player: Player, Buffer: buffer, Instance
 				end
 				table.insert(Queue.Reliable[0], {Player, Value} :: {any})
 			end
+		elseif Index == 1 then
+			local Value: { maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean } = SerdesFunctions.ReadEVENT_PartySetSettings()
+			if Events.Reliable[1] ~= nil then
+				task.spawn(Events.Reliable[1], Player, Value)
+			else
+				if #Queue.Reliable[1] > 256 then
+					warn("[Blink]: Event queue of \"PartySetSettings\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[1], {Player, Value} :: {any})
+			end
+		elseif Index == 2 then
+			local Value: nil = SerdesFunctions.ReadEVENT_PartyLeave()
+			if Events.Reliable[2] ~= nil then
+				task.spawn(Events.Reliable[2], Player, Value)
+			else
+				if #Queue.Reliable[2] > 256 then
+					warn("[Blink]: Event queue of \"PartyLeave\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[2], {Player, Value} :: {any})
+			end
+		elseif Index == 3 then
+			local Value: nil = SerdesFunctions.ReadEVENT_PartyStart()
+			if Events.Reliable[3] ~= nil then
+				task.spawn(Events.Reliable[3], Player, Value)
+			else
+				if #Queue.Reliable[3] > 256 then
+					warn("[Blink]: Event queue of \"PartyStart\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[3], {Player, Value} :: {any})
+			end
 		end
 	end
 end)
@@ -282,6 +413,140 @@ local Returns = table.freeze({
 				end
 			end
 		end
+	},
+	PartySetSettings = {
+		On = function(Listener: (Player: Player, Value: { maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean }) -> ()): () -> ()
+			Events.Reliable[1] = Listener
+			for Index, Arguments in Queue.Reliable[1] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[1] = {}
+			return function (): ()
+				if Events.Reliable[1] == Listener then
+					Events.Reliable[1] = nil
+				end
+			end
+		end
+	},
+	PartyLeave = {
+		On = function(Listener: (Player: Player, Value: nil) -> ()): () -> ()
+			Events.Reliable[2] = Listener
+			for Index, Arguments in Queue.Reliable[2] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[2] = {}
+			return function (): ()
+				if Events.Reliable[2] == Listener then
+					Events.Reliable[2] = nil
+				end
+			end
+		end
+	},
+	PartyStart = {
+		On = function(Listener: (Player: Player, Value: nil) -> ()): () -> ()
+			Events.Reliable[3] = Listener
+			for Index, Arguments in Queue.Reliable[3] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[3] = {}
+			return function (): ()
+				if Events.Reliable[3] == Listener then
+					Events.Reliable[3] = nil
+				end
+			end
+		end
+	},
+	PartyState = {
+		Fire = function(Player: Player, Value: { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }): ()
+			Load(PlayersMap[Player])
+			SerdesFunctions.WriteEVENT_PartyState(Value)
+			PlayersMap[Player] = Save()
+		end,
+		FireAll = function(Value: { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyState(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireList = function(List: {Player}, Value: { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyState(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in List do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireExcept = function(Except: Player, Value: { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyState(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				if Player == Except then
+					continue
+				end
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+	},
+	PartyMessage = {
+		Fire = function(Player: Player, Value: string): ()
+			Load(PlayersMap[Player])
+			SerdesFunctions.WriteEVENT_PartyMessage(Value)
+			PlayersMap[Player] = Save()
+		end,
+		FireAll = function(Value: string): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyMessage(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireList = function(List: {Player}, Value: string): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyMessage(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in List do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireExcept = function(Except: Player, Value: string): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyMessage(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				if Player == Except then
+					continue
+				end
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
 	},
 })
 type BLINK_EVENTS_SYMBOL = typeof(Returns)

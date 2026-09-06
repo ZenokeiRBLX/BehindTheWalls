@@ -8,3 +8,55 @@ event RequestSpawn {
     Type: Reliable,
     Call: SingleAsync
 }
+
+enum Difficulty = { Easy, Normal, Hard }
+
+struct PartySettings {
+    maxSize: u8,
+    difficulty: Difficulty,
+    friendsOnly: boolean
+}
+
+struct PartyStateData {
+    active: boolean,
+    isHost: boolean,
+    portalId: u8,
+    maxSize: u8,
+    difficulty: Difficulty,
+    friendsOnly: boolean,
+    countdown: u8,
+    members: string[]
+}
+
+event PartySetSettings {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync,
+    Data: PartySettings
+}
+
+event PartyLeave {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync
+}
+
+event PartyStart {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync
+}
+
+event PartyState {
+    From: Server,
+    Type: Reliable,
+    Call: SingleAsync,
+    Data: PartyStateData
+}
+
+event PartyMessage {
+    From: Server,
+    Type: Reliable,
+    Call: SingleAsync,
+    Data: string
+}

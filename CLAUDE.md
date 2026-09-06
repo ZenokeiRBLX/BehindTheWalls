@@ -35,11 +35,12 @@ This file applies to the entire repository.
 ## Repository Layout
 
 - `src/server/Bootstrap.server.luau` is the server entry point; it starts `SystemRegistry`.
-- `src/server/Systems` contains server systems started by `SystemRegistry` (`DataSystem`, `SpawnSystem`).
+- `src/server/Systems` contains server systems started by `SystemRegistry` (`DataSystem`, `SpawnSystem`, `PartySystem`).
 - `src/server/Modules` contains server-only services and helpers (`DataService`, `ProfileTemplate`, `ProfileStore`, `DataConfig`).
 - `src/client/Bootstrap.client.luau` is the client entry point; it starts `ControllerRegistry`.
-- `src/client/Controllers` contains client controllers started by `ControllerRegistry` (`PlayerDataController`, `IntroController`, `MusicController`, `FootstepsController`, `MenuButtonsController`).
+- `src/client/Controllers` contains client controllers started by `ControllerRegistry` (`PlayerDataController`, `IntroController`, `MusicController`, `FootstepsController`, `MenuButtonsController`, `PartyController`).
 - `src/client/Gui/MenuPanels.model.json` is the Rojo-owned `StarterGui.MenuPanels` ScreenGui (the Shop/Index/Badges/Settings panel frames driven by `MenuButtonsController`).
+- `src/client/Gui/PartyGui.model.json` is the Rojo-owned `StarterGui.PartyGui` (portal party/queue screen driven by `PartyController`; the server side is `PartySystem`, which owns the `Workspace.Portal` portals, their `BORDER` touch walls, `TELEPORT` pads, and billboard text).
 - `src/client/Modules` contains client-only modules (`IntroScene` owns the sewer intro scene effects), synced to `StarterPlayerScripts.Client.Modules`.
 - `src/shared/Modules` contains modules shared by client and server (`Config`, `GameInfo`), synced to `ReplicatedStorage.Shared.Modules`.
 - `src/replicatedFirst/Loading_Handler` is the `ReplicatedFirst` intro/loading screen (script plus JSON-backed GUI).

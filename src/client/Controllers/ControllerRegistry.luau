@@ -6,6 +6,7 @@ local IntroController = require(Controllers:WaitForChild("IntroController"))
 local MusicController = require(Controllers:WaitForChild("MusicController"))
 local FootstepsController = require(Controllers:WaitForChild("FootstepsController"))
 local MenuButtonsController = require(Controllers:WaitForChild("MenuButtonsController"))
+local PartyController = require(Controllers:WaitForChild("PartyController"))
 
 local CONTROLLERS = {
 	PlayerDataController,
@@ -13,6 +14,7 @@ local CONTROLLERS = {
 	MusicController,
 	FootstepsController,
 	MenuButtonsController,
+	PartyController,
 }
 
 function ControllerRegistry.start()
