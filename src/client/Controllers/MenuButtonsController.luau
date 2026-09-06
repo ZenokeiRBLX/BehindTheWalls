@@ -4,15 +4,22 @@ local TweenService = game:GetService("TweenService")
 
 local MenuButtonsController = {}
 
-local BUTTON_KEYWORDS = { "shop", "index", "badges", "settings" }
+local MENU_KEYWORDS = { "shop", "index", "badges", "settings" }
+local CLOSE_KEYWORDS = { "exit", "close" }
 local IGNORED_SCREEN_GUIS = { PRELOADING = true, LoadingScreen = true, Intro_Screen = true, Black_Transition = true }
 local PANEL_SUFFIXES = { "Frame", "_Frame", "Panel", "_Panel", "Menu", "_Menu", "" }
+local HOVER_SOUND = "UI_HIGHLIGHT"
+local CLICK_SOUND = "UI_CLICK"
 
+local HIGHLIGHT_COLOR = Color3.fromRGB(255, 236, 150)
+local HOVER_TINT = 0.45
+local HOVER_BACKGROUND_TINT = 0.25
 local HOVER_SCALE = 1.12
 local HOVER_TILT = 6
+local HOVER_ICON_TILT = 12
 local PRESS_SCALE = 0.9
 local PRESS_TILT = -10
-local HOVER_BRIGHTEN = 0.18
+local PRESS_ICON_TILT = -18
 local HOVER_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local LEAVE_TWEEN = TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 local PRESS_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -29,15 +36,19 @@ local POP_IN_BATCH_GAP = 1
 type ButtonState = {
 	button: GuiButton,
 	scale: UIScale,
+	icon: GuiObject?,
 	baseRotation: number,
+	baseIconRotation: number,
 	tiltDirection: number,
 	baseImageColor: Color3?,
+	baseIconColor: Color3?,
 	baseTextColor: Color3?,
 	baseBackgroundColor: Color3,
 	hovered: boolean,
 	pressed: boolean,
 	idleResumeAt: number,
-	panel: GuiObject?,
+	keyword: string?,
+	isCloser: boolean,
 	connections: { RBXScriptConnection },
 }
 
@@ -49,14 +60,14 @@ local wobbleIndex = 0
 local popIndex = 0
 local lastPopAt = 0
 
-local function matchesKeyword(name: string): boolean
+local function findKeyword(name: string, keywords: { string }): string?
 	local lowered = string.lower(name)
-	for _, keyword in BUTTON_KEYWORDS do
+	for _, keyword in keywords do
 		if string.find(lowered, keyword, 1, true) then
-			return true
+			return keyword
 		end
 	end
-	return false
+	return nil
 end
 
 local function getScreenGui(instance: Instance): ScreenGui?
@@ -86,22 +97,46 @@ local function ensureScale(gui: GuiObject): UIScale
 	return scale
 end
 
-local function brighten(color: Color3, amount: number): Color3
-	return color:Lerp(Color3.new(1, 1, 1), amount)
+local function tint(color: Color3, amount: number): Color3
+	return color:Lerp(HIGHLIGHT_COLOR, amount)
 end
 
-local function findPanel(button: GuiButton): GuiObject?
-	local explicit = button:GetAttribute("Panel")
-	local screenGui = getScreenGui(button)
-	if not screenGui then
+local function findIcon(button: GuiButton): GuiObject?
+	for _, child in button:GetChildren() do
+		if child:IsA("ImageLabel") and string.find(string.lower(child.Name), "image", 1, true) then
+			return child
+		end
+	end
+	return button:FindFirstChildWhichIsA("ImageLabel")
+end
+
+local function findPanel(button: GuiButton, keyword: string): GuiObject?
+	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if not playerGui then
 		return nil
 	end
-	local baseName = if typeof(explicit) == "string" then explicit else button.Name
-	for _, suffix in PANEL_SUFFIXES do
-		local candidate = screenGui:FindFirstChild(baseName .. suffix, true)
-		if candidate and candidate:IsA("GuiObject") and candidate ~= button and not candidate:IsA("GuiButton") then
-			return candidate
+	local explicit = button:GetAttribute("Panel")
+	local baseNames = if typeof(explicit) == "string"
+		then { explicit }
+		else { string.upper(string.sub(keyword, 1, 1)) .. string.sub(keyword, 2), keyword, string.upper(keyword) }
+	for _, baseName in baseNames do
+		for _, suffix in PANEL_SUFFIXES do
+			local candidate = playerGui:FindFirstChild(baseName .. suffix, true)
+			if candidate and candidate:IsA("GuiObject") and candidate ~= button and not candidate:IsA("GuiButton") then
+				return candidate
+			end
 		end
+	end
+	return nil
+end
+
+local function findContainingPanel(button: GuiButton): GuiObject?
+	local current = button.Parent
+	while current and not current:IsA("ScreenGui") do
+		if current:IsA("GuiObject") and current.Parent and current.Parent:IsA("ScreenGui") then
+			return current
+		end
+		current = current.Parent
 	end
 	return nil
 end
@@ -131,14 +166,16 @@ local function setPanelVisible(panel: GuiObject, visible: boolean)
 	end
 end
 
-local function togglePanel(state: ButtonState)
-	local panel = state.panel
-	if not panel then
-		return
-	end
+local function closePanel(panel: GuiObject)
+	setPanelVisible(panel, false)
 	if openPanel == panel then
-		setPanelVisible(panel, false)
 		openPanel = nil
+	end
+end
+
+local function togglePanel(panel: GuiObject)
+	if openPanel == panel then
+		closePanel(panel)
 		return
 	end
 	if openPanel then
@@ -153,13 +190,20 @@ local function applyHoverLook(state: ButtonState)
 	TweenService:Create(state.scale, HOVER_TWEEN, { Scale = HOVER_SCALE }):Play()
 	TweenService:Create(button, HOVER_TWEEN, { Rotation = state.baseRotation + HOVER_TILT * state.tiltDirection }):Play()
 	if button:IsA("ImageButton") and state.baseImageColor then
-		TweenService:Create(button, HOVER_TWEEN, { ImageColor3 = brighten(state.baseImageColor, HOVER_BRIGHTEN) }):Play()
+		TweenService:Create(button, HOVER_TWEEN, { ImageColor3 = tint(state.baseImageColor, HOVER_TINT) }):Play()
 	end
 	if button:IsA("TextButton") and state.baseTextColor then
-		TweenService:Create(button, HOVER_TWEEN, { TextColor3 = brighten(state.baseTextColor, HOVER_BRIGHTEN) }):Play()
+		TweenService:Create(button, HOVER_TWEEN, { TextColor3 = tint(state.baseTextColor, HOVER_TINT) }):Play()
 	end
 	if button.BackgroundTransparency < 1 then
-		TweenService:Create(button, HOVER_TWEEN, { BackgroundColor3 = brighten(state.baseBackgroundColor, HOVER_BRIGHTEN * 0.6) }):Play()
+		TweenService:Create(button, HOVER_TWEEN, { BackgroundColor3 = tint(state.baseBackgroundColor, HOVER_BACKGROUND_TINT) }):Play()
+	end
+	local icon = state.icon
+	if icon then
+		TweenService:Create(icon, HOVER_TWEEN, { Rotation = state.baseIconRotation + HOVER_ICON_TILT * state.tiltDirection }):Play()
+		if icon:IsA("ImageLabel") and state.baseIconColor then
+			TweenService:Create(icon, HOVER_TWEEN, { ImageColor3 = tint(state.baseIconColor, HOVER_TINT) }):Play()
+		end
 	end
 end
 
@@ -176,18 +220,34 @@ local function applyRestLook(state: ButtonState)
 	if button.BackgroundTransparency < 1 then
 		TweenService:Create(button, LEAVE_TWEEN, { BackgroundColor3 = state.baseBackgroundColor }):Play()
 	end
+	local icon = state.icon
+	if icon then
+		TweenService:Create(icon, LEAVE_TWEEN, { Rotation = state.baseIconRotation }):Play()
+		if icon:IsA("ImageLabel") and state.baseIconColor then
+			TweenService:Create(icon, LEAVE_TWEEN, { ImageColor3 = state.baseIconColor }):Play()
+		end
+	end
 end
 
 local function applyPressLook(state: ButtonState)
 	TweenService:Create(state.scale, PRESS_TWEEN, { Scale = PRESS_SCALE }):Play()
 	TweenService:Create(state.button, PRESS_TWEEN, { Rotation = state.baseRotation + PRESS_TILT * state.tiltDirection }):Play()
+	if state.icon then
+		TweenService:Create(state.icon, PRESS_TWEEN, { Rotation = state.baseIconRotation + PRESS_ICON_TILT * state.tiltDirection }):Play()
+	end
 end
 
 local function applyReleaseLook(state: ButtonState)
-	local targetScale = if state.hovered then HOVER_SCALE else 1
-	local targetRotation = if state.hovered then state.baseRotation + HOVER_TILT * state.tiltDirection else state.baseRotation
-	TweenService:Create(state.scale, RELEASE_TWEEN, { Scale = targetScale }):Play()
-	TweenService:Create(state.button, RELEASE_TWEEN, { Rotation = targetRotation }):Play()
+	local hovered = state.hovered
+	TweenService:Create(state.scale, RELEASE_TWEEN, { Scale = if hovered then HOVER_SCALE else 1 }):Play()
+	TweenService:Create(state.button, RELEASE_TWEEN, {
+		Rotation = if hovered then state.baseRotation + HOVER_TILT * state.tiltDirection else state.baseRotation,
+	}):Play()
+	if state.icon then
+		TweenService:Create(state.icon, RELEASE_TWEEN, {
+			Rotation = if hovered then state.baseIconRotation + HOVER_ICON_TILT * state.tiltDirection else state.baseIconRotation,
+		}):Play()
+	end
 end
 
 local function popIn(state: ButtonState)
@@ -237,83 +297,96 @@ local function unbind(button: GuiButton)
 	end
 end
 
-local function bind(button: GuiButton)
+local function onActivated(state: ButtonState)
+	playUiSound(CLICK_SOUND)
+	if state.isCloser then
+		local panel = findContainingPanel(state.button)
+		if panel then
+			closePanel(panel)
+		end
+		return
+	end
+	local keyword = state.keyword
+	if keyword then
+		local panel = findPanel(state.button, keyword)
+		if panel then
+			togglePanel(panel)
+		end
+	end
+end
+
+local function bind(button: GuiButton, keyword: string?, isCloser: boolean)
 	if bound[button] or isIgnored(button) then
 		return
 	end
 
+	local icon = findIcon(button)
 	local state: ButtonState = {
 		button = button,
 		scale = ensureScale(button),
+		icon = icon,
 		baseRotation = button.Rotation,
-		tiltDirection = if (#BUTTON_KEYWORDS + wobbleIndex) % 2 == 0 then 1 else -1,
+		baseIconRotation = if icon then icon.Rotation else 0,
+		tiltDirection = if wobbleIndex % 2 == 0 then 1 else -1,
 		baseImageColor = if button:IsA("ImageButton") then button.ImageColor3 else nil,
+		baseIconColor = if icon and icon:IsA("ImageLabel") then icon.ImageColor3 else nil,
 		baseTextColor = if button:IsA("TextButton") then button.TextColor3 else nil,
 		baseBackgroundColor = button.BackgroundColor3,
 		hovered = false,
 		pressed = false,
 		idleResumeAt = 0,
-		panel = findPanel(button),
+		keyword = keyword,
+		isCloser = isCloser,
 		connections = {},
 	}
 	bound[button] = state
 
-	table.insert(
-		state.connections,
-		button.MouseEnter:Connect(function()
-			state.hovered = true
-			playUiSound("UI_Hover")
-			applyHoverLook(state)
-		end)
-	)
-	table.insert(
-		state.connections,
-		button.MouseLeave:Connect(function()
-			state.hovered = false
-			state.pressed = false
-			state.idleResumeAt = os.clock() + 0.25
-			applyRestLook(state)
-		end)
-	)
-	table.insert(
-		state.connections,
-		button.MouseButton1Down:Connect(function()
-			state.pressed = true
-			applyPressLook(state)
-		end)
-	)
-	table.insert(
-		state.connections,
-		button.MouseButton1Up:Connect(function()
-			state.pressed = false
-			applyReleaseLook(state)
-		end)
-	)
-	table.insert(
-		state.connections,
-		button.Activated:Connect(function()
-			playUiSound("UI_Click")
-			togglePanel(state)
-		end)
-	)
-	table.insert(
-		state.connections,
-		button.AncestryChanged:Connect(function()
-			if not button:IsDescendantOf(game) then
-				unbind(button)
-			end
-		end)
-	)
+	table.insert(state.connections, button.MouseEnter:Connect(function()
+		state.hovered = true
+		playUiSound(HOVER_SOUND)
+		applyHoverLook(state)
+	end))
+	table.insert(state.connections, button.MouseLeave:Connect(function()
+		state.hovered = false
+		state.pressed = false
+		state.idleResumeAt = os.clock() + 0.25
+		applyRestLook(state)
+	end))
+	table.insert(state.connections, button.MouseButton1Down:Connect(function()
+		state.pressed = true
+		applyPressLook(state)
+	end))
+	table.insert(state.connections, button.MouseButton1Up:Connect(function()
+		state.pressed = false
+		applyReleaseLook(state)
+	end))
+	table.insert(state.connections, button.Activated:Connect(function()
+		onActivated(state)
+	end))
+	table.insert(state.connections, button.AncestryChanged:Connect(function()
+		if not button:IsDescendantOf(game) then
+			unbind(button)
+		end
+	end))
 
-	popIn(state)
-	startIdleWobble(state)
+	if not isCloser then
+		popIn(state)
+		startIdleWobble(state)
+	end
 end
 
-local function scan(root: Instance)
-	for _, descendant in root:GetDescendants() do
-		if descendant:IsA("GuiButton") and matchesKeyword(descendant.Name) then
-			bind(descendant)
-		end
+local function consider(instance: Instance)
+	if not instance:IsA("GuiButton") then
+		return
+	end
+	local closeKeyword = findKeyword(instance.Name, CLOSE_KEYWORDS)
+	if closeKeyword then
+		bind(instance, nil, true)
+		return
+	end
+	local keyword = findKeyword(instance.Name, MENU_KEYWORDS)
+	if keyword then
+		bind(instance, keyword, false)
 	end
 end
 
@@ -325,15 +398,12 @@ function MenuButtonsController.start()
 
 	task.spawn(function()
 		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
-		scan(playerGui)
-		table.insert(
-			watchConnections,
-			playerGui.DescendantAdded:Connect(function(descendant)
-				if descendant:IsA("GuiButton") and matchesKeyword(descendant.Name) then
-					task.defer(bind, descendant)
-				end
-			end)
-		)
+		for _, descendant in playerGui:GetDescendants() do
+			consider(descendant)
+		end
+		table.insert(watchConnections, playerGui.DescendantAdded:Connect(function(descendant)
+			task.defer(consider, descendant)
+		end))
 	end)
 end
 
