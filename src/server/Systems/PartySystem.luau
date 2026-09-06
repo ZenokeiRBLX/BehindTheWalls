@@ -15,6 +15,9 @@ local TELEPORT_NAME = "TELEPORT"
 local BILLBOARD_NAME = "billboardGui"
 local SPAWN_NAME = "Spawn"
 local TOUCH_DEBOUNCE = 1.5
+local LEAVE_TOUCH_GRACE = 2.5
+local JOIN_MAX_DISTANCE = 30
+local SWEEP_INTERVAL = 2
 local TELEPORT_HEIGHT = 3
 local MEMBER_RING_RADIUS = 1.4
 local IN_QUEUE_ATTRIBUTE = "InQueue"
@@ -183,6 +186,7 @@ local function leaveParty(player: Player, notify: boolean)
 		table.remove(portal.members, index)
 	end
 	cancelCountdown(portal)
+	touchDebounce[player] = os.clock() + LEAVE_TOUCH_GRACE
 
 	if portal.host == player then
 		portal.host = portal.members[1]
@@ -239,6 +243,13 @@ local function onBorderTouched(portal: Portal, hit: BasePart)
 	end
 	local now = os.clock()
 	if (touchDebounce[player] or 0) + TOUCH_DEBOUNCE > now then
+		return
+	end
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	if not rootPart or not rootPart:IsA("BasePart") then
+		return
+	end
+	if (rootPart.Position - portal.teleportPart.Position).Magnitude > JOIN_MAX_DISTANCE then
 		return
 	end
 	touchDebounce[player] = now
@@ -379,6 +390,33 @@ local function registerPortal(model: Model)
 	updateBillboard(portal)
 end
 
+local function sweepPortals()
+	for _, portal in portals do
+		local changed = false
+		for index = #portal.members, 1, -1 do
+			local member = portal.members[index]
+			if member.Parent ~= Players or not member.Character then
+				table.remove(portal.members, index)
+				playerPortal[member] = nil
+				changed = true
+			end
+		end
+		if changed then
+			cancelCountdown(portal)
+			if portal.host and not table.find(portal.members, portal.host) then
+				portal.host = portal.members[1]
+			end
+			if #portal.members == 0 then
+				resetPortal(portal)
+			else
+				broadcast(portal)
+			end
+		else
+			updateBillboard(portal)
+		end
+	end
+end
+
 function PartySystem.start()
 	if isStarted then
 		return
@@ -406,6 +444,12 @@ function PartySystem.start()
 		leaveParty(player, false)
 		touchDebounce[player] = nil
 	end))
+	task.spawn(function()
+		while isStarted do
+			task.wait(SWEEP_INTERVAL)
+			sweepPortals()
+		end
+	end)
 	table.insert(connections, Players.PlayerAdded:Connect(function(player)
 		player.CharacterRemoving:Connect(function()
 			leaveParty(player, true)

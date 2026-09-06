@@ -327,8 +327,11 @@ function PartyController.start()
 
 	task.spawn(function()
 		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
-		local gui = playerGui:WaitForChild(GUI_NAME) :: ScreenGui
-		bindGui(gui)
+		local gui = playerGui:FindFirstChild(GUI_NAME)
+		while not gui do
+			gui = playerGui:WaitForChild(GUI_NAME, 30)
+		end
+		bindGui(gui :: ScreenGui)
 		bindHudLeaveButton(playerGui)
 		table.insert(connections, playerGui.ChildAdded:Connect(function(child)
 			if child.Name == HUD_GUI_NAME and not hudLeaveButton then
