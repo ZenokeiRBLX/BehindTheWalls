@@ -50,10 +50,7 @@
 
     "StarterGui": {
       "$className": "StarterGui",
-      "$ignoreUnknownInstances": true,
-      "MenuPanels": {
-        "$path": "src/client/Gui/MenuPanels.model.json"
-      }
+      "$ignoreUnknownInstances": true
     },
 
     "StarterPlayer": {

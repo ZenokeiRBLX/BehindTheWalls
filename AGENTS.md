@@ -39,7 +39,7 @@ This file applies to the entire repository.
 - `src/server/Modules` contains server-only services and helpers (`DataService`, `ProfileTemplate`, `ProfileStore`, `DataConfig`).
 - `src/client/Bootstrap.client.luau` is the client entry point; it starts `ControllerRegistry`.
 - `src/client/Controllers` contains client controllers started by `ControllerRegistry` (`PlayerDataController`, `IntroController`, `MusicController`, `FootstepsController`, `MenuButtonsController`, `PartyController`).
-- `src/client/Gui/MenuPanels.model.json` is the Rojo-owned `StarterGui.MenuPanels` ScreenGui (the Shop/Index/Badges/Settings panel frames driven by `MenuButtonsController`).
+- `StarterGui.MenuPanels` (the Shop/Index/Badges/Settings panel frames) is Studio-owned; `MenuButtonsController` finds panels by name (`ShopFrame`, `IndexFrame`, `BadgesFrame`, `SettingsFrame`) and any button named `Exit`/`Close` inside a panel closes it.
 - `StarterGui.PartyGui` (the portal party/queue screen) is Studio-owned; `PartyController` drives it by child names (`Panel`, `SizeRow.Size_1..6`, `DifficultyRow.Easy/Normal/Hard`, `FriendsRow.FriendsToggle`, `MembersLabel`, `StartButton`, `LeaveButton`, `Toast`). The server side is `PartySystem`, which owns the `Workspace.Portal` portals, their `BORDER` touch walls, `TELEPORT` pads, and billboard text.
 - `src/client/Modules` contains client-only modules (`IntroScene` owns the sewer intro scene effects), synced to `StarterPlayerScripts.Client.Modules`.
 - `src/shared/Modules` contains modules shared by client and server (`Config`, `GameInfo`), synced to `ReplicatedStorage.Shared.Modules`.
