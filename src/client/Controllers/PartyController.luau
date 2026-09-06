@@ -202,6 +202,10 @@ local function setPanelVisible(visible: boolean)
 	end
 	local scale = ensureScale(panel)
 	if visible then
+		local screenGui = panel:FindFirstAncestorOfClass("ScreenGui")
+		if screenGui then
+			screenGui.Enabled = true
+		end
 		if not panel.Visible then
 			panel.Visible = true
 			scale.Scale = 0.85
@@ -225,6 +229,7 @@ local function onPartyState(state: PartyState)
 end
 
 local function bindGui(gui: ScreenGui)
+	gui.Enabled = true
 	panel = gui:WaitForChild("Panel", 10) :: Frame?
 	toast = gui:FindFirstChild("Toast") :: TextLabel?
 	if not panel then
