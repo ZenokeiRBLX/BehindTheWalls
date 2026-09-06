@@ -427,8 +427,11 @@ for index, line in CREDIT_LINES do
 	waitForCue(index)
 	showLine(line)
 	if index == 2 and skipText and skipText:IsA("TextLabel") then
-		-- The title has landed; from here on the player may tap to skip the rest
-		skipText.TextTransparency = 0
+		-- The title has landed; from here on the player may tap to skip the rest.
+		-- The hint uses the same font as the credits and eases in instead of popping
+		skipText.FontFace = text.FontFace
+		skipText.TextTransparency = 1
+		ts:Create(skipText, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
 		skipAllowed = true
 	end
 end

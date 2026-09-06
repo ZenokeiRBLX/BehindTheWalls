@@ -38,7 +38,7 @@ This file applies to the entire repository.
 - `src/server/Systems` contains server systems started by `SystemRegistry` (`DataSystem`, `SpawnSystem`).
 - `src/server/Modules` contains server-only services and helpers (`DataService`, `ProfileTemplate`, `ProfileStore`, `DataConfig`).
 - `src/client/Bootstrap.client.luau` is the client entry point; it starts `ControllerRegistry`.
-- `src/client/Controllers` contains client controllers started by `ControllerRegistry` (`PlayerDataController`, `IntroController`, `MusicController`, `FootstepsController`).
+- `src/client/Controllers` contains client controllers started by `ControllerRegistry` (`PlayerDataController`, `IntroController`, `MusicController`, `FootstepsController`, `MenuButtonsController`).
 - `src/client/Modules` contains client-only modules (`IntroScene` owns the sewer intro scene effects), synced to `StarterPlayerScripts.Client.Modules`.
 - `src/shared/Modules` contains modules shared by client and server (`Config`, `GameInfo`), synced to `ReplicatedStorage.Shared.Modules`.
 - `src/replicatedFirst/Loading_Handler` is the `ReplicatedFirst` intro/loading screen (script plus JSON-backed GUI).
