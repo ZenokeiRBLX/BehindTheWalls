@@ -21,6 +21,10 @@ local PANEL_OPEN_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingD
 local PANEL_CLOSE_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local IDLE_WOBBLE_DEGREES = 2.5
 local IDLE_WOBBLE_SECONDS = 2.2
+local POP_IN_TWEEN = TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local POP_IN_STAGGER = 0.09
+local POP_IN_SPIN = 28
+local POP_IN_BATCH_GAP = 1
 
 type ButtonState = {
 	button: GuiButton,
@@ -42,6 +46,8 @@ local bound: { [GuiButton]: ButtonState } = {}
 local openPanel: GuiObject?
 local watchConnections: { RBXScriptConnection } = {}
 local wobbleIndex = 0
+local popIndex = 0
+local lastPopAt = 0
 
 local function matchesKeyword(name: string): boolean
 	local lowered = string.lower(name)
@@ -184,6 +190,27 @@ local function applyReleaseLook(state: ButtonState)
 	TweenService:Create(state.button, RELEASE_TWEEN, { Rotation = targetRotation }):Play()
 end
 
+local function popIn(state: ButtonState)
+	local now = os.clock()
+	if now - lastPopAt > POP_IN_BATCH_GAP then
+		popIndex = 0
+	end
+	lastPopAt = now
+	local delay = popIndex * POP_IN_STAGGER
+	popIndex += 1
+
+	state.scale.Scale = 0
+	state.button.Rotation = state.baseRotation - POP_IN_SPIN * state.tiltDirection
+	state.idleResumeAt = now + delay + POP_IN_TWEEN.Time
+	task.delay(delay, function()
+		if not bound[state.button] then
+			return
+		end
+		TweenService:Create(state.scale, POP_IN_TWEEN, { Scale = 1 }):Play()
+		TweenService:Create(state.button, POP_IN_TWEEN, { Rotation = state.baseRotation }):Play()
+	end)
+end
+
 local function startIdleWobble(state: ButtonState)
 	wobbleIndex += 1
 	local phase = wobbleIndex * 0.7
@@ -278,6 +305,7 @@ local function bind(button: GuiButton)
 		end)
 	)
 
+	popIn(state)
 	startIdleWobble(state)
 end
 
