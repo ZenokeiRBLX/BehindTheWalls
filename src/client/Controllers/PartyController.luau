@@ -10,7 +10,7 @@ local PartyController = {}
 local GUI_NAME = "PartyGui"
 local HUD_GUI_NAME = "ScreenGui"
 local HUD_LEAVE_BUTTON_NAME = "LeaveQueue"
-local SIZE_COUNT = 6
+local SIZE_COUNT = 5
 local DIFFICULTIES = { "Easy", "Normal", "Hard" }
 local CLICK_SOUND = "UI_CLICK"
 local HOVER_SOUND = "UI_HIGHLIGHT"
@@ -67,7 +67,11 @@ local function showToast(text: string)
 	toast.Text = text
 	toast.TextTransparency = 1
 	toast.BackgroundTransparency = 1
-	TweenService:Create(toast, SELECT_TWEEN, { TextTransparency = 0, BackgroundTransparency = 0.35 }):Play()
+	local toastStroke = toast:FindFirstChild("Stroke")
+	TweenService:Create(toast, SELECT_TWEEN, { TextTransparency = 0, BackgroundTransparency = 0.2 }):Play()
+	if toastStroke and toastStroke:IsA("UIStroke") then
+		TweenService:Create(toastStroke, SELECT_TWEEN, { Transparency = 0.4 }):Play()
+	end
 	task.delay(TOAST_HOLD, function()
 		if token ~= toastToken then
 			return
@@ -76,8 +80,14 @@ local function showToast(text: string)
 			TextTransparency = 1,
 			BackgroundTransparency = 1,
 		}):Play()
+		if toastStroke and toastStroke:IsA("UIStroke") then
+			TweenService:Create(toastStroke, TweenInfo.new(0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.In), { Transparency = 1 }):Play()
+		end
 	end)
 end
+
+local SELECTED_TEXT_COLOR = Color3.new(0.07, 0.07, 0.09)
+local UNSELECTED_TEXT_COLOR = Color3.new(1, 1, 1)
 
 local function setSelected(button: TextButton?, selected: boolean)
 	if not button then
@@ -87,7 +97,10 @@ local function setSelected(button: TextButton?, selected: boolean)
 	if selectedStroke and selectedStroke:IsA("UIStroke") then
 		TweenService:Create(selectedStroke, SELECT_TWEEN, { Transparency = if selected then 0 else 1 }):Play()
 	end
-	TweenService:Create(button, SELECT_TWEEN, { BackgroundTransparency = if selected then 0 else 0.15 }):Play()
+	TweenService:Create(button, SELECT_TWEEN, {
+		BackgroundTransparency = if selected then 0 else 1,
+		TextColor3 = if selected then SELECTED_TEXT_COLOR else UNSELECTED_TEXT_COLOR,
+	}):Play()
 end
 
 local function setEnabledLook(button: TextButton?, enabled: boolean)
@@ -279,6 +292,13 @@ local function bindGui(gui: ScreenGui)
 	if leave and leave:IsA("TextButton") then
 		leaveButton = leave
 		wirePress(leave, function()
+			Blink.PartyLeave.Fire()
+		end)
+	end
+
+	local exit = panel:FindFirstChild("ExitButton")
+	if exit and exit:IsA("GuiButton") then
+		wirePress(exit, function()
 			Blink.PartyLeave.Fire()
 		end)
 	end

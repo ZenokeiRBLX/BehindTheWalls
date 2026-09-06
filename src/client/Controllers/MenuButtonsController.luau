@@ -6,7 +6,7 @@ local MenuButtonsController = {}
 
 local MENU_KEYWORDS = { "shop", "index", "badges", "settings" }
 local CLOSE_KEYWORDS = { "exit", "close" }
-local IGNORED_SCREEN_GUIS = { PRELOADING = true, LoadingScreen = true, Intro_Screen = true, Black_Transition = true }
+local IGNORED_SCREEN_GUIS = { PRELOADING = true, LoadingScreen = true, Intro_Screen = true, Black_Transition = true, PartyGui = true }
 local PANEL_SUFFIXES = { "Frame", "_Frame", "Panel", "_Panel", "Menu", "_Menu", "" }
 local HOVER_SOUND = "UI_HIGHLIGHT"
 local CLICK_SOUND = "UI_CLICK"
