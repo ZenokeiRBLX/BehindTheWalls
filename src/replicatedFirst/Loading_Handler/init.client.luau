@@ -287,6 +287,7 @@ local skipText = bgFrame:FindFirstChild("Load_Skip_Text") -- "tap to skip" hint,
 -- Once the skip hint is showing, any tap or click ends the credits early
 local skipAllowed = false
 local skipRequested = false
+local skipPulse = nil -- the repeating flash on the hint, cancelled when the credits end
 local skipConnection = UserInputService.InputBegan:Connect(function(input)
 	if not skipAllowed or skipRequested then
 		return
@@ -428,10 +429,19 @@ for index, line in CREDIT_LINES do
 	showLine(line)
 	if index == 2 and skipText and skipText:IsA("TextLabel") then
 		-- The title has landed; from here on the player may tap to skip the rest.
-		-- The hint uses the same font as the credits and eases in instead of popping
+		-- The hint sits in [brackets], uses the same font as the credits, eases in, then keeps flashing
+		local hintWords = skipText.Text:gsub("^%s*%[%s*", ""):gsub("%s*%]%s*$", "")
+		skipText.Text = "[ " .. hintWords .. " ]"
 		skipText.FontFace = text.FontFace
 		skipText.TextTransparency = 1
-		ts:Create(skipText, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {TextTransparency = 0}):Play()
+		local fadeInTween = ts:Create(skipText, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {TextTransparency = 0})
+		fadeInTween:Play()
+		fadeInTween.Completed:Once(function()
+			if skipText.TextTransparency < 1 then
+				skipPulse = ts:Create(skipText, TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {TextTransparency = 0.65})
+				skipPulse:Play()
+			end
+		end)
 		skipAllowed = true
 	end
 end
@@ -440,6 +450,9 @@ repeat
 	task.wait()
 until os.clock() - holdStart >= 2 or skipRequested -- let the last line sit for a bit, unless skipped
 skipConnection:Disconnect()
+if skipPulse then
+	skipPulse:Cancel()
+end
 if skipText then
 	skipText.TextTransparency = 1 -- hide the hint as the credits wrap up
 end
