@@ -1,0 +1,79 @@
+{
+  "name": "BehindTheWallsGame",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "ReplicaClient": {
+        "$path": "src/vendor/Replica/ReplicaClient.luau"
+      },
+      "ReplicaShared": {
+        "$path": "src/vendor/Replica/ReplicaShared"
+      },
+      "Blink": {
+        "$path": "src/shared/Blink"
+      },
+      "Shared": {
+        "$className": "Folder",
+        "Modules": {
+          "$path": "src/shared/Modules"
+        }
+      }
+    },
+
+    "ServerScriptService": {
+      "$ignoreUnknownInstances": true,
+      "ReplicaServer": {
+        "$path": "src/vendor/Replica/ReplicaServer.luau"
+      },
+      "Server": {
+        "$className": "Folder",
+        "Bootstrap": {
+          "$path": "src/server/Bootstrap.server.luau"
+        },
+        "Systems": {
+          "$className": "Folder",
+          "$path": "src/game/server/Systems",
+          "DataSystem": {
+            "$path": "src/server/Systems/DataSystem.luau"
+          }
+        },
+        "Modules": {
+          "$className": "Folder",
+          "$path": "src/server/Modules"
+        }
+      }
+    },
+
+    "StarterGui": {
+      "$className": "StarterGui",
+      "$ignoreUnknownInstances": true
+    },
+
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Client": {
+          "$className": "Folder",
+          "Bootstrap": {
+            "$path": "src/client/Bootstrap.client.luau"
+          },
+          "Controllers": {
+            "$className": "Folder",
+            "$path": "src/game/client/Controllers",
+            "PlayerDataController": {
+              "$path": "src/client/Controllers/PlayerDataController.luau"
+            },
+            "FootstepsController": {
+              "$path": "src/client/Controllers/FootstepsController.luau"
+            }
+          }
+        }
+      }
+    },
+
+    "Workspace": {
+      "$className": "Workspace",
+      "$ignoreUnknownInstances": true
+    }
+  }
+}

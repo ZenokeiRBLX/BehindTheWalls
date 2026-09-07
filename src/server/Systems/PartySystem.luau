@@ -350,6 +350,7 @@ function launchParty(portal: Portal)
 	local teleported = false
 	if hasPlace then
 		local options = Instance.new("TeleportOptions")
+		options.ShouldReserveServer = true
 		options:SetTeleportData({
 			difficulty = portal.difficulty,
 			friendsOnly = portal.friendsOnly,
