@@ -30,6 +30,7 @@ type Portal = {
 	id: number,
 	model: Model,
 	teleportPart: BasePart,
+	billboard: BillboardGui?,
 	titleLabel: TextLabel?,
 	countLabel: TextLabel?,
 	host: Player?,
@@ -58,6 +59,9 @@ end
 
 local function updateBillboard(portal: Portal)
 	local host = portal.host
+	if portal.billboard then
+		portal.billboard.Enabled = true
+	end
 	if portal.titleLabel then
 		if host then
 			local title = host.DisplayName .. "'s Party  -  " .. portal.difficulty
@@ -120,6 +124,12 @@ local function resetPortal(portal: Portal)
 	portal.countdown = 0
 	portal.starting = false
 	updateBillboard(portal)
+end
+
+local function isAlive(player: Player): boolean
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	return humanoid ~= nil and humanoid.Health > 0
 end
 
 local function placeCharacter(player: Player, cframe: CFrame)
@@ -202,7 +212,9 @@ local function leaveParty(player: Player, notify: boolean)
 	end
 
 	if player.Parent == Players then
-		teleportOut(player)
+		if isAlive(player) then
+			teleportOut(player)
+		end
 		if notify then
 			sendInactive(player)
 		end
@@ -241,7 +253,7 @@ end
 local function onBorderTouched(portal: Portal, hit: BasePart)
 	local character = hit:FindFirstAncestorOfClass("Model")
 	local player = character and Players:GetPlayerFromCharacter(character)
-	if not player then
+	if not player or not isAlive(player) then
 		return
 	end
 	local now = os.clock()
@@ -348,13 +360,14 @@ local function onStart(player: Player)
 	startCountdown(portal)
 end
 
-local function findLabels(teleportPart: BasePart): (TextLabel?, TextLabel?)
-	local billboard = teleportPart:FindFirstChild(BILLBOARD_NAME) or teleportPart:FindFirstChildWhichIsA("BillboardGui")
-	if not billboard then
-		return nil, nil
+local function findLabels(teleportPart: BasePart): (BillboardGui?, TextLabel?, TextLabel?)
+	local container = teleportPart:FindFirstChild(BILLBOARD_NAME) or teleportPart:FindFirstChildWhichIsA("BillboardGui")
+	if not container then
+		return nil, nil, nil
 	end
+	local billboard = if container:IsA("BillboardGui") then container else nil
 	local labels = {}
-	for _, descendant in billboard:GetDescendants() do
+	for _, descendant in container:GetDescendants() do
 		if descendant:IsA("TextLabel") then
 			table.insert(labels, descendant)
 		end
@@ -362,7 +375,7 @@ local function findLabels(teleportPart: BasePart): (TextLabel?, TextLabel?)
 	table.sort(labels, function(a, b)
 		return a.Position.Y.Scale < b.Position.Y.Scale
 	end)
-	return labels[1], labels[2]
+	return billboard, labels[1], labels[2]
 end
 
 local function registerPortal(model: Model)
@@ -372,11 +385,12 @@ local function registerPortal(model: Model)
 		warn(("PartySystem: %s has no %s part"):format(model:GetFullName(), TELEPORT_NAME))
 		return
 	end
-	local titleLabel, countLabel = findLabels(teleportPart)
+	local billboard, titleLabel, countLabel = findLabels(teleportPart)
 	local portal: Portal = {
 		id = id,
 		model = model,
 		teleportPart = teleportPart,
+		billboard = billboard,
 		titleLabel = titleLabel,
 		countLabel = countLabel,
 		host = nil,
@@ -405,7 +419,7 @@ local function sweepPortals()
 		local changed = false
 		for index = #portal.members, 1, -1 do
 			local member = portal.members[index]
-			if member.Parent ~= Players or not member.Character then
+			if member.Parent ~= Players or not isAlive(member) then
 				table.remove(portal.members, index)
 				playerPortal[member] = nil
 				changed = true
@@ -424,6 +438,27 @@ local function sweepPortals()
 		else
 			updateBillboard(portal)
 		end
+	end
+end
+
+local function watchCharacter(player: Player, character: Model)
+	local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 10)
+	if humanoid and humanoid:IsA("Humanoid") then
+		humanoid.Died:Once(function()
+			leaveParty(player, true)
+		end)
+	end
+end
+
+local function watchPlayer(player: Player)
+	table.insert(connections, player.CharacterAdded:Connect(function(character)
+		watchCharacter(player, character)
+	end))
+	table.insert(connections, player.CharacterRemoving:Connect(function()
+		leaveParty(player, true)
+	end))
+	if player.Character then
+		watchCharacter(player, player.Character)
 	end
 end
 
@@ -460,15 +495,9 @@ function PartySystem.start()
 			sweepPortals()
 		end
 	end)
-	table.insert(connections, Players.PlayerAdded:Connect(function(player)
-		player.CharacterRemoving:Connect(function()
-			leaveParty(player, true)
-		end)
-	end))
+	table.insert(connections, Players.PlayerAdded:Connect(watchPlayer))
 	for _, player in Players:GetPlayers() do
-		player.CharacterRemoving:Connect(function()
-			leaveParty(player, true)
-		end)
+		watchPlayer(player)
 	end
 end
 
