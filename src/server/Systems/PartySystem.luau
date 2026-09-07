@@ -20,6 +20,10 @@ local JOIN_MAX_DISTANCE = 30
 local SWEEP_INTERVAL = 2
 local TELEPORT_HEIGHT = 3
 local MEMBER_RING_RADIUS = 1.4
+local EXIT_DISTANCE = 4.5
+local EXIT_SPACING = 2.5
+local EXIT_RAY_HEIGHT = 10
+local EXIT_RAY_DEPTH = 30
 local IN_QUEUE_ATTRIBUTE = "InQueue"
 
 local DIFFICULTIES: { [string]: boolean } = { Easy = true, Normal = true, Hard = true }
@@ -47,6 +51,7 @@ local isStarted = false
 local portals: { [number]: Portal } = {}
 local playerPortal: { [Player]: number } = {}
 local touchDebounce: { [Player]: number } = {}
+local lastPortal: { [Player]: number } = {}
 local connections: { RBXScriptConnection } = {}
 
 local function memberNames(portal: Portal): { string }
@@ -132,6 +137,13 @@ local function isAlive(player: Player): boolean
 	return humanoid ~= nil and humanoid.Health > 0
 end
 
+local function detachMember(player: Player, portalId: number)
+	playerPortal[player] = nil
+	lastPortal[player] = portalId
+	player:SetAttribute(IN_QUEUE_ATTRIBUTE, false)
+	touchDebounce[player] = os.clock() + LEAVE_TOUCH_GRACE
+end
+
 local function placeCharacter(player: Player, cframe: CFrame)
 	local character = player.Character
 	if not character then
@@ -151,13 +163,68 @@ local function teleportIn(portal: Portal, player: Player, index: number)
 	placeCharacter(player, CFrame.new(base.Position + Vector3.new(0, TELEPORT_HEIGHT, 0) + ringOffset) * base.Rotation)
 end
 
-local function teleportOut(player: Player)
+local function findExitBorder(portal: Portal): BasePart?
+	local center = portal.teleportPart.Position
+	local spawnLocation = Workspace:FindFirstChild(SPAWN_NAME)
+	local toward = if spawnLocation and spawnLocation:IsA("BasePart") then spawnLocation.Position - center else -center
+	toward = Vector3.new(toward.X, 0, toward.Z)
+	local best: BasePart? = nil
+	local bestDot = -math.huge
+	for _, child in portal.model:GetChildren() do
+		if child.Name == BORDER_NAME and child:IsA("BasePart") then
+			local outward = Vector3.new(child.Position.X - center.X, 0, child.Position.Z - center.Z)
+			if outward.Magnitude > 0 then
+				local dot = if toward.Magnitude > 0 then outward.Unit:Dot(toward.Unit) else 0
+				if dot > bestDot then
+					bestDot = dot
+					best = child
+				end
+			end
+		end
+	end
+	return best
+end
+
+local function findExitCFrame(portal: Portal, slot: number): CFrame?
+	local border = findExitBorder(portal)
+	if not border then
+		return nil
+	end
+	local center = portal.teleportPart.Position
+	local outward = Vector3.new(border.Position.X - center.X, 0, border.Position.Z - center.Z).Unit
+	local sideways = Vector3.new(-outward.Z, 0, outward.X)
+	local thickness = math.min(border.Size.X, border.Size.Z)
+	local lateralSign = if (slot - 1) % 2 == 0 then 1 else -1
+	local lateral = lateralSign * math.ceil((slot - 1) / 2) * EXIT_SPACING
+	local spot = Vector3.new(border.Position.X, center.Y, border.Position.Z) + outward * (thickness / 2 + EXIT_DISTANCE) + sideways * lateral
+	local characters = {}
+	for _, other in Players:GetPlayers() do
+		if other.Character then
+			table.insert(characters, other.Character)
+		end
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = characters
+	local result = Workspace:Raycast(spot + Vector3.new(0, EXIT_RAY_HEIGHT, 0), Vector3.new(0, -EXIT_RAY_DEPTH, 0), params)
+	local floorY = if result then result.Position.Y else center.Y + portal.teleportPart.Size.Y / 2
+	return CFrame.lookAt(Vector3.new(spot.X, floorY, spot.Z), Vector3.new(center.X, floorY, center.Z))
+end
+
+local function teleportOut(player: Player, portal: Portal?, slot: number?)
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	local hipHeight = if humanoid then humanoid.HipHeight else 2
+	local rootHalf = if rootPart and rootPart:IsA("BasePart") then rootPart.Size.Y / 2 else 1
+	local exit = if portal then findExitCFrame(portal, slot or 1) else nil
+	if exit then
+		placeCharacter(player, exit + Vector3.new(0, hipHeight + rootHalf + 0.1, 0))
+		return
+	end
 	local spawnLocation = Workspace:FindFirstChild(SPAWN_NAME)
 	if spawnLocation and spawnLocation:IsA("BasePart") then
-		local character = player.Character
-		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-		local hipHeight = if humanoid then humanoid.HipHeight else 2
-		placeCharacter(player, CFrame.new(spawnLocation.Position + Vector3.new(0, spawnLocation.Size.Y / 2 + hipHeight + 1.2, 0)))
+		placeCharacter(player, CFrame.new(spawnLocation.Position + Vector3.new(0, spawnLocation.Size.Y / 2 + hipHeight + rootHalf + 0.1, 0)))
 	end
 end
 
@@ -187,8 +254,7 @@ local function leaveParty(player: Player, notify: boolean)
 		return
 	end
 	local portal = portals[portalId]
-	playerPortal[player] = nil
-	player:SetAttribute(IN_QUEUE_ATTRIBUTE, false)
+	detachMember(player, portalId)
 	if not portal then
 		return
 	end
@@ -200,7 +266,6 @@ local function leaveParty(player: Player, notify: boolean)
 	if portal.host == player then
 		cancelCountdown(portal)
 	end
-	touchDebounce[player] = os.clock() + LEAVE_TOUCH_GRACE
 
 	if portal.host == player then
 		portal.host = portal.members[1]
@@ -213,7 +278,7 @@ local function leaveParty(player: Player, notify: boolean)
 
 	if player.Parent == Players then
 		if isAlive(player) then
-			teleportOut(player)
+			teleportOut(player, portal, index or 1)
 		end
 		if notify then
 			sendInactive(player)
@@ -281,7 +346,9 @@ end
 function launchParty(portal: Portal)
 	local placeId = Config.Party.GamePlaceId
 	local members = table.clone(portal.members)
-	if placeId and placeId > 0 then
+	local hasPlace = placeId ~= nil and placeId > 0
+	local teleported = false
+	if hasPlace then
 		local options = Instance.new("TeleportOptions")
 		options:SetTeleportData({
 			difficulty = portal.difficulty,
@@ -291,27 +358,45 @@ function launchParty(portal: Portal)
 		local ok, err = pcall(function()
 			TeleportService:TeleportAsync(placeId, members, options)
 		end)
+		teleported = ok
 		if not ok then
 			warn(("PartySystem teleport failed: %s"):format(tostring(err)))
-			for _, member in members do
-				Blink.PartyMessage.Fire(member, "Teleport failed, please try again")
-			end
-			portal.starting = false
-			portal.countdown = 0
-			broadcast(portal)
 		end
-		return
 	end
 
-	for _, member in members do
-		Blink.PartyMessage.Fire(member, "No game place is set up yet, sending you back to the lobby")
-	end
 	portal.starting = false
 	portal.countdown = 0
 	for _, member in members do
-		leaveParty(member, true)
+		detachMember(member, portal.id)
 	end
 	resetPortal(portal)
+
+	local failMessage = if hasPlace then "Teleport failed, sending you back to the lobby" else "No game place is set up yet, sending you back to the lobby"
+	for slot, member in members do
+		if member.Parent ~= Players then
+			continue
+		end
+		if not teleported then
+			Blink.PartyMessage.Fire(member, failMessage)
+			if isAlive(member) then
+				teleportOut(member, portal, slot)
+			end
+		end
+		sendInactive(member)
+	end
+end
+
+local function onTeleportFailed(player: Player, _result: Enum.TeleportResult, errorMessage: string)
+	if player.Parent ~= Players or playerPortal[player] then
+		return
+	end
+	warn(("PartySystem teleport failed for %s: %s"):format(player.Name, tostring(errorMessage)))
+	Blink.PartyMessage.Fire(player, "Teleport failed, sending you back to the lobby")
+	local portalId = lastPortal[player]
+	local portal = if portalId then portals[portalId] else nil
+	if isAlive(player) then
+		teleportOut(player, portal, 1)
+	end
 end
 
 local function startCountdown(portal: Portal)
@@ -488,7 +573,9 @@ function PartySystem.start()
 	table.insert(connections, Players.PlayerRemoving:Connect(function(player)
 		leaveParty(player, false)
 		touchDebounce[player] = nil
+		lastPortal[player] = nil
 	end))
+	table.insert(connections, TeleportService.TeleportInitFailed:Connect(onTeleportFailed))
 	task.spawn(function()
 		while isStarted do
 			task.wait(SWEEP_INTERVAL)
@@ -517,6 +604,7 @@ function PartySystem.stop()
 	end
 	table.clear(portals)
 	table.clear(playerPortal)
+	table.clear(lastPortal)
 end
 
 return PartySystem
