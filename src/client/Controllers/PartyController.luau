@@ -320,13 +320,14 @@ end
 local function bindHudLeaveButton(playerGui: PlayerGui)
 	local hud = playerGui:FindFirstChild(HUD_GUI_NAME)
 	local button = hud and hud:FindFirstChild(HUD_LEAVE_BUTTON_NAME)
-	if button and button:IsA("GuiButton") then
-		hudLeaveButton = button
-		button.Visible = currentState ~= nil and currentState.active
-		wirePress(button, function()
-			Blink.PartyLeave.Fire()
-		end)
+	if not button or not button:IsA("GuiButton") or button == hudLeaveButton then
+		return
 	end
+	hudLeaveButton = button
+	button.Visible = currentState ~= nil and currentState.active
+	wirePress(button, function()
+		Blink.PartyLeave.Fire()
+	end)
 end
 
 function PartyController.start()
@@ -347,7 +348,7 @@ function PartyController.start()
 		bindGui(gui :: ScreenGui)
 		bindHudLeaveButton(playerGui)
 		table.insert(connections, playerGui.ChildAdded:Connect(function(child)
-			if child.Name == HUD_GUI_NAME and not hudLeaveButton then
+			if child.Name == HUD_GUI_NAME then
 				task.defer(bindHudLeaveButton, playerGui)
 			end
 		end))

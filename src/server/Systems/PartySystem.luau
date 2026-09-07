@@ -284,15 +284,22 @@ function launchParty(portal: Portal)
 			for _, member in members do
 				Blink.PartyMessage.Fire(member, "Teleport failed, please try again")
 			end
+			portal.starting = false
+			portal.countdown = 0
+			broadcast(portal)
 		end
-	else
-		for _, member in members do
-			Blink.PartyMessage.Fire(member, "No game place is set up yet (Config.Party.GamePlaceId)")
-		end
+		return
+	end
+
+	for _, member in members do
+		Blink.PartyMessage.Fire(member, "No game place is set up yet, sending you back to the lobby")
 	end
 	portal.starting = false
 	portal.countdown = 0
-	broadcast(portal)
+	for _, member in members do
+		leaveParty(member, true)
+	end
+	resetPortal(portal)
 end
 
 local function startCountdown(portal: Portal)
