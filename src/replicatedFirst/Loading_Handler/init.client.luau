@@ -288,6 +288,8 @@ local skipText = bgFrame:FindFirstChild("Load_Skip_Text") -- "tap to skip" hint,
 local skipAllowed = false
 local skipRequested = false
 local skipPulse = nil -- the repeating flash on the hint, cancelled when the credits end
+local skipFadeIn = nil
+local creditsOver = false
 local skipConnection = UserInputService.InputBegan:Connect(function(input)
 	if not skipAllowed or skipRequested then
 		return
@@ -426,6 +428,9 @@ for index, line in CREDIT_LINES do
 		break -- the player tapped to skip, stop showing lines
 	end
 	waitForCue(index)
+	if skipRequested then
+		break
+	end
 	showLine(line)
 	if index == 2 and skipText and skipText:IsA("TextLabel") then
 		-- The title has landed; from here on the player may tap to skip the rest.
@@ -434,13 +439,14 @@ for index, line in CREDIT_LINES do
 		skipText.Text = "[ " .. hintWords .. " ]"
 		skipText.FontFace = text.FontFace
 		skipText.TextTransparency = 1
-		local fadeInTween = ts:Create(skipText, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {TextTransparency = 0})
-		fadeInTween:Play()
-		fadeInTween.Completed:Once(function()
-			if skipText.TextTransparency < 1 then
-				skipPulse = ts:Create(skipText, TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {TextTransparency = 0.65})
-				skipPulse:Play()
+		skipFadeIn = ts:Create(skipText, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {TextTransparency = 0})
+		skipFadeIn:Play()
+		skipFadeIn.Completed:Once(function(playbackState)
+			if playbackState ~= Enum.PlaybackState.Completed or creditsOver or skipRequested then
+				return
 			end
+			skipPulse = ts:Create(skipText, TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {TextTransparency = 0.65})
+			skipPulse:Play()
 		end)
 		skipAllowed = true
 	end
@@ -450,6 +456,10 @@ repeat
 	task.wait()
 until os.clock() - holdStart >= 2 or skipRequested -- let the last line sit for a bit, unless skipped
 skipConnection:Disconnect()
+creditsOver = true
+if skipFadeIn then
+	skipFadeIn:Cancel()
+end
 if skipPulse then
 	skipPulse:Cancel()
 end
