@@ -71,7 +71,7 @@ local function updateBillboard(portal: Portal)
 	end
 	if portal.countLabel then
 		if portal.starting and portal.countdown > 0 then
-			portal.countLabel.Text = ("Starting in %d"):format(portal.countdown)
+			portal.countLabel.Text = ("%d/%d  -  Starting in %d"):format(#portal.members, portal.maxSize, portal.countdown)
 		else
 			portal.countLabel.Text = ("%d/%d"):format(#portal.members, portal.maxSize)
 		end
@@ -169,6 +169,8 @@ local function cancelCountdown(portal: Portal)
 	end
 end
 
+local launchParty
+
 local function leaveParty(player: Player, notify: boolean)
 	local portalId = playerPortal[player]
 	if not portalId then
@@ -185,7 +187,9 @@ local function leaveParty(player: Player, notify: boolean)
 	if index then
 		table.remove(portal.members, index)
 	end
-	cancelCountdown(portal)
+	if portal.host == player then
+		cancelCountdown(portal)
+	end
 	touchDebounce[player] = os.clock() + LEAVE_TOUCH_GRACE
 
 	if portal.host == player then
@@ -214,10 +218,6 @@ local function joinParty(portal: Portal, player: Player)
 		resetPortal(portal)
 		portal.host = player
 	else
-		if portal.starting then
-			Blink.PartyMessage.Fire(player, "That party is already starting")
-			return
-		end
 		if #portal.members >= portal.maxSize then
 			Blink.PartyMessage.Fire(player, "That party is full")
 			return
@@ -233,6 +233,9 @@ local function joinParty(portal: Portal, player: Player)
 	player:SetAttribute(IN_QUEUE_ATTRIBUTE, true)
 	teleportIn(portal, player, #portal.members)
 	broadcast(portal)
+	if portal.starting and #portal.members >= portal.maxSize then
+		launchParty(portal)
+	end
 end
 
 local function onBorderTouched(portal: Portal, hit: BasePart)
@@ -263,7 +266,7 @@ local function onBorderTouched(portal: Portal, hit: BasePart)
 	joinParty(portal, player)
 end
 
-local function launchParty(portal: Portal)
+function launchParty(portal: Portal)
 	local placeId = Config.Party.GamePlaceId
 	local members = table.clone(portal.members)
 	if placeId and placeId > 0 then

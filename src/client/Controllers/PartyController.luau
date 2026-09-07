@@ -185,11 +185,7 @@ local function applyState(state: PartyState)
 	end
 	if startButton then
 		startButton.Visible = state.isHost
-		if state.countdown > 0 then
-			startButton.Text = ("STARTING IN %d"):format(state.countdown)
-		else
-			startButton.Text = "START"
-		end
+		startButton.Text = "CREATE PARTY"
 	end
 	if hudLeaveButton then
 		hudLeaveButton.Visible = state.active
@@ -224,8 +220,17 @@ local function setPanelVisible(visible: boolean)
 end
 
 local function onPartyState(state: PartyState)
+	local previous = currentState
 	applyState(state)
-	setPanelVisible(state.active)
+	setPanelVisible(state.active and state.countdown == 0)
+	local wasOpen = previous ~= nil and previous.active and previous.countdown > 0
+	if state.active and state.countdown > 0 and not wasOpen then
+		if state.isHost then
+			showToast(("Party created! Starting in %d seconds, others can join now"):format(state.countdown))
+		else
+			showToast(("Joined the party! Starting in %d seconds"):format(state.countdown))
+		end
+	end
 end
 
 local function bindGui(gui: ScreenGui)
