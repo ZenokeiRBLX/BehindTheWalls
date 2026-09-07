@@ -192,10 +192,13 @@ local function applyState(state: PartyState)
 	end
 end
 
+local panelWanted = false
+
 local function setPanelVisible(visible: boolean)
 	if not panel then
 		return
 	end
+	panelWanted = visible
 	local scale = ensureScale(panel)
 	if visible then
 		local screenGui = panel:FindFirstAncestorOfClass("ScreenGui")
@@ -210,7 +213,7 @@ local function setPanelVisible(visible: boolean)
 	elseif panel.Visible then
 		local tween = TweenService:Create(scale, PANEL_HIDE_TWEEN, { Scale = 0.85 })
 		tween.Completed:Once(function()
-			if currentState == nil or not currentState.active then
+			if not panelWanted then
 				panel.Visible = false
 				scale.Scale = 1
 			end
