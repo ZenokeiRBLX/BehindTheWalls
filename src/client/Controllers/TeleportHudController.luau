@@ -1,4 +1,5 @@
 local Players = game:GetService("Players")
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
 local TeleportService = game:GetService("TeleportService")
@@ -16,8 +17,11 @@ local LABEL_NAME = "TextLabel"
 local DISPLAY_ORDER = 1000
 local SHOWN_FRAME_ATTRIBUTE = "ShownFrameTransparency"
 local SHOWN_TEXT_ATTRIBUTE = "ShownTextTransparency"
+local PHASE_ATTRIBUTE = "ArrivalPhase"
+local ARRIVAL_COMPLETE_ATTRIBUTE = "ArrivalComplete"
 local TELEPORT_TEXT = "Teleporting"
 local WAITING_TEXT = "Waiting for Players to Load.. [%d/%d]"
+local WAITING_PENDING_TEXT = "Waiting for Players to Load.."
 local DOT_INTERVAL = 0.45
 local MAX_DOTS = 3
 local FALLBACK_MAX_TEXT_SIZE = 36
@@ -80,7 +84,7 @@ local function resolveHud(): ScreenGui?
 	if existing and existing:IsA("ScreenGui") then
 		return existing
 	end
-	local template = StarterGui:FindFirstChild(HUD_NAME)
+	local template = ReplicatedFirst:FindFirstChild(HUD_NAME) or StarterGui:FindFirstChild(HUD_NAME)
 	local gui = if template and template:IsA("ScreenGui") then template:Clone() else buildFallbackHud()
 	gui.Parent = playerGui
 	return gui
@@ -224,6 +228,7 @@ end
 
 local function onArrivalState(state: ArrivalState)
 	if state.complete then
+		Players.LocalPlayer:SetAttribute(ARRIVAL_COMPLETE_ATTRIBUTE, true)
 		hide()
 		return
 	end
@@ -248,9 +253,13 @@ function TeleportHudController.start()
 	task.spawn(function()
 		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 		local arriving = hasArrivingHud(playerGui :: PlayerGui)
-		if arriving then
-			bindHud()
-			runDots()
+		if arriving and bindHud() then
+			if hud and hud:GetAttribute(PHASE_ATTRIBUTE) == "Waiting" then
+				phase = "Waiting"
+				setText(WAITING_PENDING_TEXT)
+			else
+				runDots()
+			end
 		end
 		if arriving or game.PlaceId == Config.Places.Game then
 			Blink.ArrivalRequest.Fire()
