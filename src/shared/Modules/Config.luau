@@ -15,6 +15,7 @@ Config.Party = {
 	DefaultSize = 5,
 	DefaultDifficulty = "Normal",
 	CountdownSeconds = 10,
+	ArrivalTimeoutSeconds = 60,
 	GamePlaceId = Config.Places.Game,
 }
 

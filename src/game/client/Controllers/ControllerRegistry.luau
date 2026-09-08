@@ -3,10 +3,12 @@ local ControllerRegistry = {}
 local Controllers = script.Parent
 local PlayerDataController = require(Controllers:WaitForChild("PlayerDataController"))
 local FootstepsController = require(Controllers:WaitForChild("FootstepsController"))
+local TeleportHudController = require(Controllers:WaitForChild("TeleportHudController"))
 
 local CONTROLLERS = {
 	PlayerDataController,
 	FootstepsController,
+	TeleportHudController,
 }
 
 function ControllerRegistry.start()

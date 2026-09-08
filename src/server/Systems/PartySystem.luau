@@ -25,6 +25,8 @@ local EXIT_SPACING = 2.5
 local EXIT_RAY_HEIGHT = 10
 local EXIT_RAY_DEPTH = 30
 local IN_QUEUE_ATTRIBUTE = "InQueue"
+local TELEPORT_PREP_TIMEOUT = 4
+local TELEPORT_PREP_POLL = 0.1
 
 local DIFFICULTIES: { [string]: boolean } = { Easy = true, Normal = true, Hard = true }
 
@@ -44,6 +46,7 @@ type Portal = {
 	friendsOnly: boolean,
 	countdown: number,
 	starting: boolean,
+	launching: boolean,
 	connections: { RBXScriptConnection },
 }
 
@@ -52,6 +55,7 @@ local portals: { [number]: Portal } = {}
 local playerPortal: { [Player]: number } = {}
 local touchDebounce: { [Player]: number } = {}
 local lastPortal: { [Player]: number } = {}
+local teleportReady: { [Player]: boolean } = {}
 local connections: { RBXScriptConnection } = {}
 
 local function memberNames(portal: Portal): { string }
@@ -79,7 +83,9 @@ local function updateBillboard(portal: Portal)
 		end
 	end
 	if portal.countLabel then
-		if portal.starting and portal.countdown > 0 then
+		if portal.launching then
+			portal.countLabel.Text = ("%d/%d  -  Teleporting"):format(#portal.members, portal.maxSize)
+		elseif portal.starting and portal.countdown > 0 then
 			portal.countLabel.Text = ("%d/%d  -  Starting in %d"):format(#portal.members, portal.maxSize, portal.countdown)
 		else
 			portal.countLabel.Text = ("%d/%d"):format(#portal.members, portal.maxSize)
@@ -290,6 +296,10 @@ local function joinParty(portal: Portal, player: Player)
 	if playerPortal[player] then
 		return
 	end
+	if portal.launching then
+		Blink.PartyMessage.Fire(player, "That party is teleporting")
+		return
+	end
 
 	if portal.host == nil then
 		resetPortal(portal)
@@ -343,32 +353,81 @@ local function onBorderTouched(portal: Portal, hit: BasePart)
 	joinParty(portal, player)
 end
 
+local function memberIds(members: { Player }): { number }
+	local ids = {}
+	for _, member in members do
+		table.insert(ids, member.UserId)
+	end
+	return ids
+end
+
+local function waitForTeleportReady(portal: Portal, members: { Player })
+	local deadline = os.clock() + TELEPORT_PREP_TIMEOUT
+	while os.clock() < deadline do
+		local pending = false
+		for _, member in members do
+			if member.Parent == Players and playerPortal[member] == portal.id and not teleportReady[member] then
+				pending = true
+				break
+			end
+		end
+		if not pending then
+			return
+		end
+		task.wait(TELEPORT_PREP_POLL)
+	end
+end
+
 function launchParty(portal: Portal)
+	if portal.launching then
+		return
+	end
+	portal.launching = true
+	portal.starting = false
+	portal.countdown = 0
+	updateBillboard(portal)
+
 	local placeId = Config.Party.GamePlaceId
 	local members = table.clone(portal.members)
 	local hasPlace = placeId ~= nil and placeId > 0
+	local travelers: { Player } = {}
 	local teleported = false
 	if hasPlace then
-		local options = Instance.new("TeleportOptions")
-		options.ShouldReserveServer = true
-		options:SetTeleportData({
-			difficulty = portal.difficulty,
-			friendsOnly = portal.friendsOnly,
-			partySize = #members,
-		})
-		local ok, err = pcall(function()
-			TeleportService:TeleportAsync(placeId, members, options)
-		end)
-		teleported = ok
-		if not ok then
-			warn(("PartySystem teleport failed: %s"):format(tostring(err)))
+		for _, member in members do
+			teleportReady[member] = nil
+			Blink.PartyTeleporting.Fire(member)
+		end
+		waitForTeleportReady(portal, members)
+		for _, member in members do
+			if member.Parent == Players and playerPortal[member] == portal.id then
+				table.insert(travelers, member)
+			end
+		end
+		if #travelers > 0 then
+			local options = Instance.new("TeleportOptions")
+			options.ShouldReserveServer = true
+			options:SetTeleportData({
+				difficulty = portal.difficulty,
+				friendsOnly = portal.friendsOnly,
+				partySize = #travelers,
+				memberIds = memberIds(travelers),
+			})
+			local ok, err = pcall(function()
+				TeleportService:TeleportAsync(placeId, travelers, options)
+			end)
+			teleported = ok
+			if not ok then
+				warn(("PartySystem teleport failed: %s"):format(tostring(err)))
+			end
 		end
 	end
 
-	portal.starting = false
-	portal.countdown = 0
+	portal.launching = false
 	for _, member in members do
-		detachMember(member, portal.id)
+		teleportReady[member] = nil
+		if playerPortal[member] == portal.id then
+			detachMember(member, portal.id)
+		end
 	end
 	resetPortal(portal)
 
@@ -377,7 +436,11 @@ function launchParty(portal: Portal)
 		if member.Parent ~= Players then
 			continue
 		end
-		if not teleported then
+		local traveling = not hasPlace or table.find(travelers, member) ~= nil
+		if not (teleported and traveling) then
+			Blink.PartyTeleportCancelled.Fire(member)
+		end
+		if not teleported and traveling then
 			Blink.PartyMessage.Fire(member, failMessage)
 			if isAlive(member) then
 				teleportOut(member, portal, slot)
@@ -392,6 +455,7 @@ local function onTeleportFailed(player: Player, _result: Enum.TeleportResult, er
 		return
 	end
 	warn(("PartySystem teleport failed for %s: %s"):format(player.Name, tostring(errorMessage)))
+	Blink.PartyTeleportCancelled.Fire(player)
 	Blink.PartyMessage.Fire(player, "Teleport failed, sending you back to the lobby")
 	local portalId = lastPortal[player]
 	local portal = if portalId then portals[portalId] else nil
@@ -421,7 +485,7 @@ end
 local function onSetSettings(player: Player, data)
 	local portalId = playerPortal[player]
 	local portal = portalId and portals[portalId]
-	if not portal or portal.host ~= player or portal.starting then
+	if not portal or portal.host ~= player or portal.starting or portal.launching then
 		return
 	end
 
@@ -440,7 +504,7 @@ end
 local function onStart(player: Player)
 	local portalId = playerPortal[player]
 	local portal = portalId and portals[portalId]
-	if not portal or portal.host ~= player or portal.starting then
+	if not portal or portal.host ~= player or portal.starting or portal.launching then
 		return
 	end
 	startCountdown(portal)
@@ -486,6 +550,7 @@ local function registerPortal(model: Model)
 		friendsOnly = false,
 		countdown = 0,
 		starting = false,
+		launching = false,
 		connections = {},
 	}
 	portals[id] = portal
@@ -570,11 +635,15 @@ function PartySystem.start()
 		leaveParty(player, true)
 	end)
 	Blink.PartyStart.On(onStart)
+	Blink.PartyTeleportReady.On(function(player)
+		teleportReady[player] = true
+	end)
 
 	table.insert(connections, Players.PlayerRemoving:Connect(function(player)
 		leaveParty(player, false)
 		touchDebounce[player] = nil
 		lastPortal[player] = nil
+		teleportReady[player] = nil
 	end))
 	table.insert(connections, TeleportService.TeleportInitFailed:Connect(onTeleportFailed))
 	task.spawn(function()
@@ -606,6 +675,7 @@ function PartySystem.stop()
 	table.clear(portals)
 	table.clear(playerPortal)
 	table.clear(lastPortal)
+	table.clear(teleportReady)
 end
 
 return PartySystem

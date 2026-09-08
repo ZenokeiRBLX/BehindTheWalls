@@ -1,5 +1,7 @@
 local Players = game:GetService("Players")
 
+local MatchSystem = require(script.Parent:WaitForChild("MatchSystem"))
+
 local GameSpawnSystem = {}
 
 local isStarted = false
@@ -45,7 +47,12 @@ local function watchPlayer(player: Player)
 	if player.Character then
 		watchCharacter(player, player.Character)
 	elseif not Players.CharacterAutoLoads then
-		task.defer(loadCharacter, player)
+		MatchSystem.onReady(function()
+			if player.Character then
+				return
+			end
+			loadCharacter(player)
+		end)
 	end
 end
 

@@ -165,9 +165,12 @@ Queue.Reliable[0] = table.create(256)
 Queue.Reliable[1] = table.create(256)
 Queue.Reliable[2] = table.create(256)
 Queue.Reliable[3] = table.create(256)
+Queue.Reliable[8] = table.create(256)
+Queue.Reliable[9] = table.create(256)
 export type Difficulty = ("Easy" | "Normal" | "Hard")
 export type PartySettings = { maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean }
 export type PartyStateData = { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }
+export type ArrivalStateData = { arrived: number, expected: number, complete: boolean }
 function SerdesFunctions.ReadEVENT_RequestSpawn(): (nil)
 	return nil
 end
@@ -246,6 +249,35 @@ function SerdesFunctions.WriteEVENT_PartyMessage(Value: string): ()
 	buffer.writestring(SendBuffer, SendOffset, Value, Length)
 end
 
+function SerdesFunctions.WriteEVENT_PartyTeleporting(Value: nil): ()
+	-- Allocate BLOCK: 1 bytes
+	local BLOCK_START = Allocate(1)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 6)
+end
+
+function SerdesFunctions.WriteEVENT_PartyTeleportCancelled(Value: nil): ()
+	-- Allocate BLOCK: 1 bytes
+	local BLOCK_START = Allocate(1)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 7)
+end
+
+function SerdesFunctions.ReadEVENT_PartyTeleportReady(): (nil)
+	return nil
+end
+
+function SerdesFunctions.ReadEVENT_ArrivalRequest(): (nil)
+	return nil
+end
+
+function SerdesFunctions.WriteEVENT_ArrivalState(Value: { arrived: number, expected: number, complete: boolean }): ()
+	-- Allocate BLOCK: 4 bytes
+	local BLOCK_START = Allocate(4)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 10)
+	buffer.writeu8(SendBuffer, BLOCK_START + 1, Value.arrived)
+	buffer.writeu8(SendBuffer, BLOCK_START + 2, Value.expected)
+	buffer.writeu8(SendBuffer, BLOCK_START + 3, Value.complete and 1 or 0)
+end
+
 if not RunService:IsRunning() then
 	local NOOP = function() end
 	local Returns = table.freeze({
@@ -268,6 +300,30 @@ if not RunService:IsRunning() then
 		FireExcept = NOOP
 	},
 	PartyMessage = {
+		Fire = NOOP,
+		FireAll = NOOP,
+		FireList = NOOP,
+		FireExcept = NOOP
+	},
+	PartyTeleporting = {
+		Fire = NOOP,
+		FireAll = NOOP,
+		FireList = NOOP,
+		FireExcept = NOOP
+	},
+	PartyTeleportCancelled = {
+		Fire = NOOP,
+		FireAll = NOOP,
+		FireList = NOOP,
+		FireExcept = NOOP
+	},
+	PartyTeleportReady = {
+		On = NOOP
+	},
+	ArrivalRequest = {
+		On = NOOP
+	},
+	ArrivalState = {
 		Fire = NOOP,
 		FireAll = NOOP,
 		FireList = NOOP,
@@ -374,6 +430,26 @@ Reliable.OnServerEvent:Connect(function(Player: Player, Buffer: buffer, Instance
 					warn("[Blink]: Event queue of \"PartyStart\" exceeded 256, did you forget to implement a listener?")
 				end
 				table.insert(Queue.Reliable[3], {Player, Value} :: {any})
+			end
+		elseif Index == 8 then
+			local Value: nil = SerdesFunctions.ReadEVENT_PartyTeleportReady()
+			if Events.Reliable[8] ~= nil then
+				task.spawn(Events.Reliable[8], Player, Value)
+			else
+				if #Queue.Reliable[8] > 256 then
+					warn("[Blink]: Event queue of \"PartyTeleportReady\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[8], {Player, Value} :: {any})
+			end
+		elseif Index == 9 then
+			local Value: nil = SerdesFunctions.ReadEVENT_ArrivalRequest()
+			if Events.Reliable[9] ~= nil then
+				task.spawn(Events.Reliable[9], Player, Value)
+			else
+				if #Queue.Reliable[9] > 256 then
+					warn("[Blink]: Event queue of \"ArrivalRequest\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[9], {Player, Value} :: {any})
 			end
 		end
 	end
@@ -535,6 +611,172 @@ local Returns = table.freeze({
 		FireExcept = function(Except: Player, Value: string): ()
 			Load()
 			SerdesFunctions.WriteEVENT_PartyMessage(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				if Player == Except then
+					continue
+				end
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+	},
+	PartyTeleporting = {
+		Fire = function(Player: Player, Value: nil): ()
+			Load(PlayersMap[Player])
+			SerdesFunctions.WriteEVENT_PartyTeleporting(Value)
+			PlayersMap[Player] = Save()
+		end,
+		FireAll = function(Value: nil): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyTeleporting(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireList = function(List: {Player}, Value: nil): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyTeleporting(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in List do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireExcept = function(Except: Player, Value: nil): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyTeleporting(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				if Player == Except then
+					continue
+				end
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+	},
+	PartyTeleportCancelled = {
+		Fire = function(Player: Player, Value: nil): ()
+			Load(PlayersMap[Player])
+			SerdesFunctions.WriteEVENT_PartyTeleportCancelled(Value)
+			PlayersMap[Player] = Save()
+		end,
+		FireAll = function(Value: nil): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyTeleportCancelled(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireList = function(List: {Player}, Value: nil): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyTeleportCancelled(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in List do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireExcept = function(Except: Player, Value: nil): ()
+			Load()
+			SerdesFunctions.WriteEVENT_PartyTeleportCancelled(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				if Player == Except then
+					continue
+				end
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+	},
+	PartyTeleportReady = {
+		On = function(Listener: (Player: Player, Value: nil) -> ()): () -> ()
+			Events.Reliable[8] = Listener
+			for Index, Arguments in Queue.Reliable[8] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[8] = {}
+			return function (): ()
+				if Events.Reliable[8] == Listener then
+					Events.Reliable[8] = nil
+				end
+			end
+		end
+	},
+	ArrivalRequest = {
+		On = function(Listener: (Player: Player, Value: nil) -> ()): () -> ()
+			Events.Reliable[9] = Listener
+			for Index, Arguments in Queue.Reliable[9] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[9] = {}
+			return function (): ()
+				if Events.Reliable[9] == Listener then
+					Events.Reliable[9] = nil
+				end
+			end
+		end
+	},
+	ArrivalState = {
+		Fire = function(Player: Player, Value: { arrived: number, expected: number, complete: boolean }): ()
+			Load(PlayersMap[Player])
+			SerdesFunctions.WriteEVENT_ArrivalState(Value)
+			PlayersMap[Player] = Save()
+		end,
+		FireAll = function(Value: { arrived: number, expected: number, complete: boolean }): ()
+			Load()
+			SerdesFunctions.WriteEVENT_ArrivalState(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireList = function(List: {Player}, Value: { arrived: number, expected: number, complete: boolean }): ()
+			Load()
+			SerdesFunctions.WriteEVENT_ArrivalState(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in List do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireExcept = function(Except: Player, Value: { arrived: number, expected: number, complete: boolean }): ()
+			Load()
+			SerdesFunctions.WriteEVENT_ArrivalState(Value)
 			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
 			for _, Player in Players:GetPlayers() do
 				if Player == Except then

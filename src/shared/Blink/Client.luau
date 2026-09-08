@@ -162,9 +162,13 @@ local SerdesEvent = "?"
 local SerdesThread: thread?
 Queue.Reliable[4] = table.create(256)
 Queue.Reliable[5] = table.create(256)
+Queue.Reliable[6] = table.create(256)
+Queue.Reliable[7] = table.create(256)
+Queue.Reliable[10] = table.create(256)
 export type Difficulty = ("Easy" | "Normal" | "Hard")
 export type PartySettings = { maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean }
 export type PartyStateData = { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }
+export type ArrivalStateData = { arrived: number, expected: number, complete: boolean }
 function SerdesFunctions.WriteEVENT_RequestSpawn(Value: nil): ()
 	-- Allocate BLOCK: 1 bytes
 	local BLOCK_START = Allocate(1)
@@ -248,6 +252,36 @@ function SerdesFunctions.ReadEVENT_PartyMessage(): (string)
 	return Value
 end
 
+function SerdesFunctions.ReadEVENT_PartyTeleporting(): (nil)
+	return nil
+end
+
+function SerdesFunctions.ReadEVENT_PartyTeleportCancelled(): (nil)
+	return nil
+end
+
+function SerdesFunctions.WriteEVENT_PartyTeleportReady(Value: nil): ()
+	-- Allocate BLOCK: 1 bytes
+	local BLOCK_START = Allocate(1)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 8)
+end
+
+function SerdesFunctions.WriteEVENT_ArrivalRequest(Value: nil): ()
+	-- Allocate BLOCK: 1 bytes
+	local BLOCK_START = Allocate(1)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 9)
+end
+
+function SerdesFunctions.ReadEVENT_ArrivalState(): ({ arrived: number, expected: number, complete: boolean })
+	-- Read BLOCK: 3 bytes
+	local BLOCK_START = Read(3)
+	local Value = {} :: any
+	Value.arrived = buffer.readu8(RecieveBuffer, BLOCK_START + 0)
+	Value.expected = buffer.readu8(RecieveBuffer, BLOCK_START + 1)
+	Value.complete = (buffer.readu8(RecieveBuffer, BLOCK_START + 2) == 1)
+	return Value
+end
+
 if not RunService:IsRunning() then
 	local NOOP = function() end
 	local Returns = table.freeze({
@@ -267,6 +301,21 @@ if not RunService:IsRunning() then
 		On = NOOP
 	},
 	PartyMessage = {
+		On = NOOP
+	},
+	PartyTeleporting = {
+		On = NOOP
+	},
+	PartyTeleportCancelled = {
+		On = NOOP
+	},
+	PartyTeleportReady = {
+		Fire = NOOP
+	},
+	ArrivalRequest = {
+		Fire = NOOP
+	},
+	ArrivalState = {
 		On = NOOP
 	},
 	})
@@ -330,6 +379,36 @@ Reliable.OnClientEvent:Connect(function(Buffer: buffer, Instances: {Instance})
 					warn("[Blink]: Event queue of \"PartyMessage\" exceeded 256, did you forget to implement a listener?")
 				end
 				table.insert(Queue.Reliable[5], {Value} :: {any})
+			end
+		elseif Index == 6 then
+			local Value: nil = SerdesFunctions.ReadEVENT_PartyTeleporting()
+			if Events.Reliable[6] ~= nil then
+				task.spawn(Events.Reliable[6], Value)
+			else
+				if #Queue.Reliable[6] > 256 then
+					warn("[Blink]: Event queue of \"PartyTeleporting\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[6], {Value} :: {any})
+			end
+		elseif Index == 7 then
+			local Value: nil = SerdesFunctions.ReadEVENT_PartyTeleportCancelled()
+			if Events.Reliable[7] ~= nil then
+				task.spawn(Events.Reliable[7], Value)
+			else
+				if #Queue.Reliable[7] > 256 then
+					warn("[Blink]: Event queue of \"PartyTeleportCancelled\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[7], {Value} :: {any})
+			end
+		elseif Index == 10 then
+			local Value: { arrived: number, expected: number, complete: boolean } = SerdesFunctions.ReadEVENT_ArrivalState()
+			if Events.Reliable[10] ~= nil then
+				task.spawn(Events.Reliable[10], Value)
+			else
+				if #Queue.Reliable[10] > 256 then
+					warn("[Blink]: Event queue of \"ArrivalState\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[10], {Value} :: {any})
 			end
 		end
 	end
@@ -400,6 +479,58 @@ local Returns = table.freeze({
 			return function (): ()
 				if Events.Reliable[5] == Listener then
 					Events.Reliable[5] = nil
+				end
+			end
+		end
+	},
+	PartyTeleporting = {
+		On = function(Listener: (Value: nil) -> ()): () -> ()
+			Events.Reliable[6] = Listener
+			for Index, Arguments in Queue.Reliable[6] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[6] = {}
+			return function (): ()
+				if Events.Reliable[6] == Listener then
+					Events.Reliable[6] = nil
+				end
+			end
+		end
+	},
+	PartyTeleportCancelled = {
+		On = function(Listener: (Value: nil) -> ()): () -> ()
+			Events.Reliable[7] = Listener
+			for Index, Arguments in Queue.Reliable[7] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[7] = {}
+			return function (): ()
+				if Events.Reliable[7] == Listener then
+					Events.Reliable[7] = nil
+				end
+			end
+		end
+	},
+	PartyTeleportReady = {
+		Fire = function(Value: nil): ()
+			SerdesFunctions.WriteEVENT_PartyTeleportReady(Value)
+		end
+	},
+	ArrivalRequest = {
+		Fire = function(Value: nil): ()
+			SerdesFunctions.WriteEVENT_ArrivalRequest(Value)
+		end
+	},
+	ArrivalState = {
+		On = function(Listener: (Value: { arrived: number, expected: number, complete: boolean }) -> ()): () -> ()
+			Events.Reliable[10] = Listener
+			for Index, Arguments in Queue.Reliable[10] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[10] = {}
+			return function (): ()
+				if Events.Reliable[10] == Listener then
+					Events.Reliable[10] = nil
 				end
 			end
 		end

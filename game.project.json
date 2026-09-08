@@ -21,6 +21,13 @@
       }
     },
 
+    "ReplicatedFirst": {
+      "$ignoreUnknownInstances": true,
+      "TeleportArrival": {
+        "$path": "src/game/replicatedFirst/TeleportArrival.client.luau"
+      }
+    },
+
     "ServerScriptService": {
       "$ignoreUnknownInstances": true,
       "ReplicaServer": {
@@ -65,6 +72,9 @@
             },
             "FootstepsController": {
               "$path": "src/client/Controllers/FootstepsController.luau"
+            },
+            "TeleportHudController": {
+              "$path": "src/client/Controllers/TeleportHudController.luau"
             }
           }
         }

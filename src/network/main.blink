@@ -60,3 +60,40 @@ event PartyMessage {
     Call: SingleAsync,
     Data: string
 }
+
+event PartyTeleporting {
+    From: Server,
+    Type: Reliable,
+    Call: SingleAsync
+}
+
+event PartyTeleportCancelled {
+    From: Server,
+    Type: Reliable,
+    Call: SingleAsync
+}
+
+event PartyTeleportReady {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync
+}
+
+struct ArrivalStateData {
+    arrived: u8,
+    expected: u8,
+    complete: boolean
+}
+
+event ArrivalRequest {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync
+}
+
+event ArrivalState {
+    From: Server,
+    Type: Reliable,
+    Call: SingleAsync,
+    Data: ArrivalStateData
+}
