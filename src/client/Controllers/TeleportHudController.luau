@@ -19,9 +19,10 @@ local SHOWN_FRAME_ATTRIBUTE = "ShownFrameTransparency"
 local SHOWN_TEXT_ATTRIBUTE = "ShownTextTransparency"
 local PHASE_ATTRIBUTE = "ArrivalPhase"
 local ARRIVAL_COMPLETE_ATTRIBUTE = "ArrivalComplete"
+local PRELOADED_ATTRIBUTE = "CutscenePreloaded"
 local TELEPORT_TEXT = "Teleporting"
-local WAITING_TEXT = "Waiting for Players to Load.. [%d/%d]"
-local WAITING_PENDING_TEXT = "Waiting for Players to Load.."
+local WAITING_TEXT = "Loading Players... [%d/%d]"
+local WAITING_PENDING_TEXT = "Loading Players..."
 local DOT_INTERVAL = 0.45
 local MAX_DOTS = 3
 local FALLBACK_MAX_TEXT_SIZE = 36
@@ -40,6 +41,8 @@ local frame: GuiObject?
 local label: TextLabel?
 local shownFrameTransparency = 0
 local shownTextTransparency = 0
+local shownAt = os.clock()
+local completing = false
 
 local function buildFallbackHud(): ScreenGui
 	local gui = Instance.new("ScreenGui")
@@ -186,8 +189,11 @@ local function show(text: string, newPhase: Phase, onShown: (() -> ())?)
 	end
 end
 
-local function hide()
+local function hide(onHidden: (() -> ())?)
 	if not hud or phase == "Hidden" then
+		if onHidden then
+			onHidden()
+		end
 		return
 	end
 	token += 1
@@ -198,6 +204,9 @@ local function hide()
 			return
 		end
 		hud.Enabled = false
+		if onHidden then
+			onHidden()
+		end
 	end
 	local tween = tweenTo(1, 1, FADE_OUT)
 	if tween then
@@ -228,8 +237,26 @@ end
 
 local function onArrivalState(state: ArrivalState)
 	if state.complete then
-		Players.LocalPlayer:SetAttribute(ARRIVAL_COMPLETE_ATTRIBUTE, true)
-		hide()
+		if completing then
+			return
+		end
+		completing = true
+		task.spawn(function()
+			local player = Players.LocalPlayer
+			local minimum = if game.PlaceId == Config.Places.Game then Config.Party.MinLoadingSeconds else 0
+			local deadline = shownAt + Config.Party.PreloadTimeoutSeconds
+			while os.clock() < shownAt + minimum do
+				task.wait(0.1)
+			end
+			while minimum > 0 and not player:GetAttribute(PRELOADED_ATTRIBUTE) and os.clock() < deadline do
+				task.wait(0.1)
+			end
+			if not isStarted then
+				return
+			end
+			player:SetAttribute(ARRIVAL_COMPLETE_ATTRIBUTE, true)
+			hide()
+		end)
 		return
 	end
 	show(WAITING_TEXT:format(state.arrived, state.expected), "Waiting")
@@ -253,6 +280,7 @@ function TeleportHudController.start()
 	task.spawn(function()
 		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 		local arriving = hasArrivingHud(playerGui :: PlayerGui)
+		shownAt = os.clock()
 		if arriving and bindHud() then
 			if hud and hud:GetAttribute(PHASE_ATTRIBUTE) == "Waiting" then
 				phase = "Waiting"
@@ -278,6 +306,7 @@ function TeleportHudController.stop()
 	table.clear(disconnects)
 	token += 1
 	phase = "Hidden"
+	completing = false
 	if hud then
 		hud.Enabled = false
 	end

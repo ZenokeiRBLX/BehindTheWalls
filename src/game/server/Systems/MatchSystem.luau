@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
+local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Modules"):WaitForChild("Config"))
@@ -29,6 +30,17 @@ local DIFFICULTIES: { [string]: boolean } = { Easy = true, Normal = true, Hard =
 local DIFFICULTY_ATTRIBUTE = "Difficulty"
 local PARTY_SIZE_ATTRIBUTE = "PartySize"
 local ARRIVAL_POLL = 1
+local CAMERA_PART_NAME = "Cutscene_Camera"
+local CAMERA_CFRAME_ATTRIBUTE = "CutsceneCameraCFrame"
+local CAMERA_FOV_ATTRIBUTE = "CutsceneCameraFov"
+local PLAYERS_FOLDER_NAME = "Teleport_Players"
+local PLAYERS_CFRAME_ATTRIBUTE = "CutscenePlayersCFrame"
+local MAP_FOLDER_NAME = "Neighborhood"
+local MAP_MIN_ATTRIBUTE = "CutsceneMapMin"
+local MAP_MAX_ATTRIBUTE = "CutsceneMapMax"
+local PATH_FOLDER_NAME = "Cutscene_Path"
+local PATH_ATTRIBUTE_PREFIX = "CutscenePath"
+local CAMERA_PART_WAIT = 10
 
 local isStarted = false
 local connections: { RBXScriptConnection } = {}
@@ -234,11 +246,102 @@ function MatchSystem.returnToLobby(players: { Player })
 	end
 end
 
+local function findInWorkspace(name: string): Instance?
+	return Workspace:FindFirstChild(name, true) or Workspace:WaitForChild(name, CAMERA_PART_WAIT)
+end
+
+local function publishPlayersCFrame()
+	local folder = findInWorkspace(PLAYERS_FOLDER_NAME)
+	if not folder then
+		return
+	end
+	local sum = Vector3.zero
+	local look = Vector3.zero
+	local count = 0
+	for _, child in folder:GetChildren() do
+		if child:IsA("Model") or child:IsA("BasePart") then
+			local pivot = child:GetPivot()
+			sum += pivot.Position
+			look += pivot.LookVector
+			count += 1
+		end
+	end
+	if count == 0 then
+		return
+	end
+	local center = sum / count
+	local forward = if look.Magnitude > 0.001 then look.Unit else -Vector3.zAxis
+	Workspace:SetAttribute(PLAYERS_CFRAME_ATTRIBUTE, CFrame.lookAt(center, center + forward))
+end
+
+local function publishMapBounds()
+	local folder = findInWorkspace(MAP_FOLDER_NAME)
+	if not folder then
+		return
+	end
+	local minV: Vector3? = nil
+	local maxV: Vector3? = nil
+	for _, part in folder:GetDescendants() do
+		if part:IsA("BasePart") then
+			local half = part.Size / 2
+			local lo = part.Position - half
+			local hi = part.Position + half
+			minV = if minV then minV:Min(lo) else lo
+			maxV = if maxV then maxV:Max(hi) else hi
+		end
+	end
+	if minV and maxV then
+		Workspace:SetAttribute(MAP_MIN_ATTRIBUTE, minV)
+		Workspace:SetAttribute(MAP_MAX_ATTRIBUTE, maxV)
+	end
+end
+
+local function publishPath()
+	local folder = Workspace:FindFirstChild(PATH_FOLDER_NAME, true)
+	if not folder then
+		return
+	end
+	local parts = {}
+	for _, child in folder:GetChildren() do
+		if child:IsA("BasePart") then
+			table.insert(parts, child)
+		end
+	end
+	table.sort(parts, function(a, b)
+		return (tonumber(a.Name) or math.huge) < (tonumber(b.Name) or math.huge) or (a.Name < b.Name)
+	end)
+	for index, part in parts do
+		Workspace:SetAttribute(PATH_ATTRIBUTE_PREFIX .. index, part.CFrame)
+	end
+end
+
+local function publishCutsceneCamera()
+	local part = findInWorkspace(CAMERA_PART_NAME)
+	if not part or not part:IsA("BasePart") then
+		warn("MatchSystem: Workspace." .. CAMERA_PART_NAME .. " not found")
+		return
+	end
+	local fov = part:GetAttribute("FieldOfView")
+	if type(fov) == "number" then
+		Workspace:SetAttribute(CAMERA_FOV_ATTRIBUTE, fov)
+	end
+	Workspace:SetAttribute(CAMERA_CFRAME_ATTRIBUTE, part.CFrame)
+end
+
+local function publishCutscene()
+	task.spawn(publishPlayersCFrame)
+	task.spawn(publishMapBounds)
+	task.spawn(publishPath)
+	publishCutsceneCamera()
+end
+
 function MatchSystem.start()
 	if isStarted then
 		return
 	end
 	isStarted = true
+
+	task.spawn(publishCutscene)
 
 	Blink.ArrivalRequest.On(sendArrival)
 	table.insert(connections, Players.PlayerAdded:Connect(onPlayerAdded))

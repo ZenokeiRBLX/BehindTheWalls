@@ -8,7 +8,7 @@ local FRAME_NAME = "Outer_Frame"
 local LABEL_NAME = "TextLabel"
 local DISPLAY_ORDER = 1000
 local PHASE_ATTRIBUTE = "ArrivalPhase"
-local WAITING_TEXT = "Waiting for Players to Load.."
+local WAITING_TEXT = "Loading Players..."
 local TEMPLATE_WAIT = 3
 local CHILD_WAIT = 5
 

@@ -17,6 +17,16 @@ Config.Party = {
 	CountdownSeconds = 10,
 	ArrivalTimeoutSeconds = 60,
 	GamePlaceId = Config.Places.Game,
+	MinLoadingSeconds = 6,
+	PreloadTimeoutSeconds = 12,
+}
+
+Config.Cutscene = {
+	FlightSeconds = 16,
+	FlightHeight = 38,
+	BehindDistance = 11,
+	BehindHeight = 4.5,
+	HoldSeconds = 1.5,
 }
 
 return Config

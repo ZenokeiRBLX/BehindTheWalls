@@ -1,4 +1,5 @@
 local Players = game:GetService("Players")
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
@@ -14,6 +15,9 @@ local CAMERA_PART_TIMEOUT = 30
 local CAMERA_PART_POLL = 0.25
 local CAMERA_BIND = "CutsceneCamera"
 local FOV_ATTRIBUTE = "FieldOfView"
+local CAMERA_CFRAME_ATTRIBUTE = "CutsceneCameraCFrame"
+local CAMERA_FOV_ATTRIBUTE = "CutsceneCameraFov"
+local STREAM_TIMEOUT = 10
 local GUI_NAME = "Cutscene"
 local SKIP_BUTTON_NAME = "Cutscene_Skip"
 local ARRIVAL_COMPLETE_ATTRIBUTE = "ArrivalComplete"
@@ -26,12 +30,45 @@ local released = false
 local savedFov: number?
 local gui: ScreenGui?
 
+type CameraTarget = {
+	cframe: CFrame,
+	fov: number?,
+	part: BasePart?,
+}
+
 local function findCameraPart(): BasePart?
+	local part = Workspace:FindFirstChild(CAMERA_PART_NAME, true)
+	return if part and part:IsA("BasePart") then part else nil
+end
+
+local function readTarget(): CameraTarget?
+	local part = findCameraPart()
+	if part then
+		local fov = part:GetAttribute(FOV_ATTRIBUTE)
+		return {
+			cframe = part.CFrame,
+			fov = if type(fov) == "number" then fov else nil,
+			part = part,
+		}
+	end
+	local published = Workspace:GetAttribute(CAMERA_CFRAME_ATTRIBUTE)
+	if typeof(published) == "CFrame" then
+		local fov = Workspace:GetAttribute(CAMERA_FOV_ATTRIBUTE)
+		return {
+			cframe = published,
+			fov = if type(fov) == "number" then fov else nil,
+			part = nil,
+		}
+	end
+	return nil
+end
+
+local function waitForTarget(): CameraTarget?
 	local deadline = os.clock() + CAMERA_PART_TIMEOUT
 	while os.clock() < deadline do
-		local part = Workspace:FindFirstChild(CAMERA_PART_NAME, true)
-		if part and part:IsA("BasePart") then
-			return part
+		local target = readTarget()
+		if target then
+			return target
 		end
 		task.wait(CAMERA_PART_POLL)
 	end
@@ -39,23 +76,39 @@ local function findCameraPart(): BasePart?
 	return nil
 end
 
-local function bindCamera(part: BasePart)
+local function streamAround(position: Vector3)
+	if not Workspace.StreamingEnabled then
+		return
+	end
+	local ok, err = pcall(function()
+		Players.LocalPlayer:RequestStreamAroundAsync(position, STREAM_TIMEOUT)
+	end)
+	if not ok then
+		warn(("CutsceneController: RequestStreamAroundAsync failed: %s"):format(tostring(err)))
+	end
+end
+
+local function bindCamera(target: CameraTarget)
 	if cameraBound or released then
 		return
 	end
 	cameraBound = true
 	local camera = Workspace.CurrentCamera
 	savedFov = if camera then camera.FieldOfView else nil
-	local fov = part:GetAttribute(FOV_ATTRIBUTE)
 	RunService:BindToRenderStep(CAMERA_BIND, Enum.RenderPriority.Camera.Value + 1, function()
 		local current = Workspace.CurrentCamera
 		if not current then
 			return
 		end
+		local part = target.part
+		if not part or not part:IsDescendantOf(Workspace) then
+			part = findCameraPart()
+			target.part = part
+		end
 		current.CameraType = Enum.CameraType.Scriptable
-		current.CFrame = part.CFrame
-		if type(fov) == "number" then
-			current.FieldOfView = fov
+		current.CFrame = if part then part.CFrame else target.cframe
+		if type(target.fov) == "number" then
+			current.FieldOfView = target.fov
 		end
 	end)
 end
@@ -88,11 +141,13 @@ local function resolveGui(playerGui: PlayerGui): ScreenGui?
 	if existing and existing:IsA("ScreenGui") then
 		return existing
 	end
-	local template = StarterGui:FindFirstChild(GUI_NAME)
-	if template and template:IsA("ScreenGui") then
-		local clone = template:Clone()
-		clone.Parent = playerGui
-		return clone
+	for _, container in { ReplicatedFirst, StarterGui } do
+		local template = container:FindFirstChild(GUI_NAME)
+		if template and template:IsA("ScreenGui") then
+			local clone = template:Clone()
+			clone.Parent = playerGui
+			return clone
+		end
 	end
 	return nil
 end
@@ -163,9 +218,10 @@ function CutsceneController.start()
 			early.Enabled = false
 		end
 
-		local part = findCameraPart()
-		if part then
-			bindCamera(part)
+		local target = waitForTarget()
+		if target then
+			bindCamera(target)
+			streamAround(target.cframe.Position)
 		end
 		waitForArrival(player)
 		if released then
