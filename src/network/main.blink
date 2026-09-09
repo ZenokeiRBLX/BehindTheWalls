@@ -97,3 +97,9 @@ event ArrivalState {
     Call: SingleAsync,
     Data: ArrivalStateData
 }
+
+event CutsceneFinished {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync
+}

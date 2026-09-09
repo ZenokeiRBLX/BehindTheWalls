@@ -282,6 +282,12 @@ function SerdesFunctions.ReadEVENT_ArrivalState(): ({ arrived: number, expected:
 	return Value
 end
 
+function SerdesFunctions.WriteEVENT_CutsceneFinished(Value: nil): ()
+	-- Allocate BLOCK: 1 bytes
+	local BLOCK_START = Allocate(1)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 11)
+end
+
 if not RunService:IsRunning() then
 	local NOOP = function() end
 	local Returns = table.freeze({
@@ -317,6 +323,9 @@ if not RunService:IsRunning() then
 	},
 	ArrivalState = {
 		On = NOOP
+	},
+	CutsceneFinished = {
+		Fire = NOOP
 	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
@@ -533,6 +542,11 @@ local Returns = table.freeze({
 					Events.Reliable[10] = nil
 				end
 			end
+		end
+	},
+	CutsceneFinished = {
+		Fire = function(Value: nil): ()
+			SerdesFunctions.WriteEVENT_CutsceneFinished(Value)
 		end
 	},
 })

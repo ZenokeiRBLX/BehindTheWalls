@@ -35,9 +35,6 @@ local CAMERA_CFRAME_ATTRIBUTE = "CutsceneCameraCFrame"
 local CAMERA_FOV_ATTRIBUTE = "CutsceneCameraFov"
 local PLAYERS_FOLDER_NAME = "Teleport_Players"
 local PLAYERS_CFRAME_ATTRIBUTE = "CutscenePlayersCFrame"
-local MAP_FOLDER_NAME = "Neighborhood"
-local MAP_MIN_ATTRIBUTE = "CutsceneMapMin"
-local MAP_MAX_ATTRIBUTE = "CutsceneMapMax"
 local PATH_FOLDER_NAME = "Cutscene_Path"
 local PATH_ATTRIBUTE_PREFIX = "CutscenePath"
 local CAMERA_PART_WAIT = 10
@@ -274,28 +271,6 @@ local function publishPlayersCFrame()
 	Workspace:SetAttribute(PLAYERS_CFRAME_ATTRIBUTE, CFrame.lookAt(center, center + forward))
 end
 
-local function publishMapBounds()
-	local folder = findInWorkspace(MAP_FOLDER_NAME)
-	if not folder then
-		return
-	end
-	local minV: Vector3? = nil
-	local maxV: Vector3? = nil
-	for _, part in folder:GetDescendants() do
-		if part:IsA("BasePart") then
-			local half = part.Size / 2
-			local lo = part.Position - half
-			local hi = part.Position + half
-			minV = if minV then minV:Min(lo) else lo
-			maxV = if maxV then maxV:Max(hi) else hi
-		end
-	end
-	if minV and maxV then
-		Workspace:SetAttribute(MAP_MIN_ATTRIBUTE, minV)
-		Workspace:SetAttribute(MAP_MAX_ATTRIBUTE, maxV)
-	end
-end
-
 local function publishPath()
 	local folder = Workspace:FindFirstChild(PATH_FOLDER_NAME, true)
 	if not folder then
@@ -330,7 +305,6 @@ end
 
 local function publishCutscene()
 	task.spawn(publishPlayersCFrame)
-	task.spawn(publishMapBounds)
 	task.spawn(publishPath)
 	publishCutsceneCamera()
 end

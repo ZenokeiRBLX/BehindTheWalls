@@ -22,11 +22,13 @@ Config.Party = {
 }
 
 Config.Cutscene = {
-	FlightSeconds = 16,
-	FlightHeight = 38,
-	BehindDistance = 11,
-	BehindHeight = 4.5,
-	HoldSeconds = 1.5,
+	FlightSeconds = 12,
+	SkimDistance = 110,
+	SkimHeight = 3.5,
+	ReturnHeight = 6,
+	FieldOfView = 55,
+	HoldSeconds = 1,
+	CharacterWaitSeconds = 10,
 }
 
 return Config
