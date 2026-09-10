@@ -35,9 +35,12 @@ local CAMERA_CFRAME_ATTRIBUTE = "CutsceneCameraCFrame"
 local CAMERA_FOV_ATTRIBUTE = "CutsceneCameraFov"
 local PLAYERS_FOLDER_NAME = "Teleport_Players"
 local PLAYERS_CFRAME_ATTRIBUTE = "CutscenePlayersCFrame"
-local PATH_FOLDER_NAME = "Cutscene_Path"
-local PATH_ATTRIBUTE_PREFIX = "CutscenePath"
 local CAMERA_PART_WAIT = 10
+local CUTSCENE_MAP_FOLDER_NAME = "Cutscene_Map"
+local HOLE_PART_NAME = "Cutscene_Hole"
+local HOLE_ATTRIBUTE = "CutsceneHoleCFrame"
+local SLOT_ATTRIBUTE_PREFIX = "CutsceneSlot"
+local WALK_END_ATTRIBUTE_PREFIX = "CutsceneWalkEnd"
 
 local isStarted = false
 local connections: { RBXScriptConnection } = {}
@@ -48,6 +51,8 @@ local arrivalDeadline: number? = nil
 local gateOpen = false
 local readyCallbacks: { () -> () } = {}
 local lastBroadcast: ArrivalState? = nil
+local cutsceneModels: { Model } = {}
+local pinnedPlayers: { [Player]: boolean } = {}
 
 local function getJoinData(player: Player): (any, any)
 	local ok, joinData = pcall(function()
@@ -177,11 +182,77 @@ local function evaluateArrivals()
 	broadcastArrival()
 end
 
+local function collectCutsceneModels()
+	local roots: { Instance } = {}
+	local custom = Workspace:FindFirstChild(CUTSCENE_MAP_FOLDER_NAME, true)
+	if custom then
+		table.insert(roots, custom)
+	else
+		for _, name in Config.Cutscene.PinnedNames do
+			local found = Workspace:FindFirstChild(name, true) or Workspace:WaitForChild(name, CAMERA_PART_WAIT)
+			if found then
+				table.insert(roots, found)
+			end
+		end
+	end
+	local looseParts = 0
+	local function pin(model: Model)
+		model.ModelStreamingMode = Enum.ModelStreamingMode.PersistentPerPlayer
+		table.insert(cutsceneModels, model)
+	end
+	local function scan(instance: Instance)
+		for _, child in instance:GetChildren() do
+			if child:IsA("Model") then
+				pin(child)
+			elseif child:IsA("BasePart") then
+				looseParts += 1
+			elseif child:IsA("Folder") then
+				scan(child)
+			end
+		end
+	end
+	for _, root in roots do
+		if root:IsA("Model") then
+			pin(root)
+		else
+			scan(root)
+		end
+	end
+	if looseParts > 0 then
+		warn(("MatchSystem: %d loose parts in the cutscene map are not inside a Model and cannot be pinned"):format(looseParts))
+	end
+end
+
+local function pinCutsceneMap(player: Player)
+	if pinnedPlayers[player] or #cutsceneModels == 0 then
+		return
+	end
+	pinnedPlayers[player] = true
+	for _, model in cutsceneModels do
+		if model.Parent then
+			model:AddPersistentPlayer(player)
+		end
+	end
+end
+
+function MatchSystem.releaseCutsceneMap(player: Player)
+	if not pinnedPlayers[player] then
+		return
+	end
+	pinnedPlayers[player] = nil
+	for _, model in cutsceneModels do
+		if model.Parent then
+			model:RemovePersistentPlayer(player)
+		end
+	end
+end
+
 local function onPlayerAdded(player: Player)
 	if not settings then
 		settings = readTeleportData(player)
 	end
 	applyToPlayer(player)
+	pinCutsceneMap(player)
 
 	if not rosterLoaded then
 		rosterLoaded = true
@@ -199,6 +270,7 @@ local function onPlayerAdded(player: Player)
 end
 
 local function onPlayerRemoving(player: Player)
+	pinnedPlayers[player] = nil
 	if gateOpen then
 		return
 	end
@@ -247,11 +319,31 @@ local function findInWorkspace(name: string): Instance?
 	return Workspace:FindFirstChild(name, true) or Workspace:WaitForChild(name, CAMERA_PART_WAIT)
 end
 
+local function findHole(): CFrame?
+	local part = Workspace:FindFirstChild(HOLE_PART_NAME, true) or Workspace:FindFirstChild(Config.Cutscene.HoleName, true)
+	if not part then
+		part = Workspace:WaitForChild(Config.Cutscene.HoleName, CAMERA_PART_WAIT)
+	end
+	if part and part:IsA("BasePart") then
+		return part.CFrame
+	end
+	if part and part:IsA("Model") then
+		return part:GetPivot()
+	end
+	warn("MatchSystem: cutscene hole part not found")
+	return nil
+end
+
+local function slotIndex(instance: Instance): number?
+	return tonumber(instance.Name:match("%d+$"))
+end
+
 local function publishPlayersCFrame()
 	local folder = findInWorkspace(PLAYERS_FOLDER_NAME)
 	if not folder then
 		return
 	end
+	local slots: { [number]: CFrame } = {}
 	local sum = Vector3.zero
 	local look = Vector3.zero
 	local count = 0
@@ -261,6 +353,11 @@ local function publishPlayersCFrame()
 			sum += pivot.Position
 			look += pivot.LookVector
 			count += 1
+			local index = slotIndex(child)
+			if index then
+				slots[index] = pivot
+				Workspace:SetAttribute(SLOT_ATTRIBUTE_PREFIX .. index, pivot)
+			end
 		end
 	end
 	if count == 0 then
@@ -269,24 +366,30 @@ local function publishPlayersCFrame()
 	local center = sum / count
 	local forward = if look.Magnitude > 0.001 then look.Unit else -Vector3.zAxis
 	Workspace:SetAttribute(PLAYERS_CFRAME_ATTRIBUTE, CFrame.lookAt(center, center + forward))
-end
 
-local function publishPath()
-	local folder = Workspace:FindFirstChild(PATH_FOLDER_NAME, true)
-	if not folder then
+	local hole = findHole()
+	if not hole then
 		return
 	end
-	local parts = {}
-	for _, child in folder:GetChildren() do
-		if child:IsA("BasePart") then
-			table.insert(parts, child)
-		end
+	Workspace:SetAttribute(HOLE_ATTRIBUTE, hole)
+	local toHole = Vector3.new(hole.Position.X - center.X, 0, hole.Position.Z - center.Z)
+	local walkForward = if toHole.Magnitude > 0.001 then toHole.Unit else forward
+	local lineHead = Vector3.new(hole.Position.X, center.Y, hole.Position.Z) - walkForward * Config.Cutscene.StopDistance
+	local order: { number } = {}
+	for index in slots do
+		table.insert(order, index)
 	end
-	table.sort(parts, function(a, b)
-		return (tonumber(a.Name) or math.huge) < (tonumber(b.Name) or math.huge) or (a.Name < b.Name)
+	table.sort(order, function(a, b)
+		local da = slots[a].Position:Dot(walkForward)
+		local db = slots[b].Position:Dot(walkForward)
+		if da ~= db then
+			return da > db
+		end
+		return a < b
 	end)
-	for index, part in parts do
-		Workspace:SetAttribute(PATH_ATTRIBUTE_PREFIX .. index, part.CFrame)
+	for rank, index in order do
+		local position = lineHead - walkForward * ((rank - 1) * Config.Cutscene.LineSpacing)
+		Workspace:SetAttribute(WALK_END_ATTRIBUTE_PREFIX .. index, CFrame.lookAt(position, position + walkForward))
 	end
 end
 
@@ -305,7 +408,6 @@ end
 
 local function publishCutscene()
 	task.spawn(publishPlayersCFrame)
-	task.spawn(publishPath)
 	publishCutsceneCamera()
 end
 
@@ -315,6 +417,7 @@ function MatchSystem.start()
 	end
 	isStarted = true
 
+	collectCutsceneModels()
 	task.spawn(publishCutscene)
 
 	Blink.ArrivalRequest.On(sendArrival)
@@ -342,6 +445,10 @@ function MatchSystem.stop()
 	table.clear(connections)
 	table.clear(roster)
 	table.clear(readyCallbacks)
+	for player in pinnedPlayers do
+		MatchSystem.releaseCutsceneMap(player)
+	end
+	table.clear(cutsceneModels)
 	settings = nil
 	rosterLoaded = false
 	arrivalDeadline = nil

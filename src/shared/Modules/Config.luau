@@ -27,13 +27,32 @@ Config.Party = {
 }
 
 Config.Cutscene = {
-	FlightSeconds = 12,
-	SkimDistance = 110,
-	SkimHeight = 3.5,
-	ReturnHeight = 6,
 	FieldOfView = 55,
-	HoldSeconds = 1,
+	PanDownSeconds = 3,
+	PanDownLift = 12,
+	PanDownTiltDegrees = 30,
+	WalkSpeed = 7.5,
+	WalkAnimationReferenceSpeed = 9,
+	StopDistance = 14,
+	LineSpacing = 3.5,
+	LineMergeStart = 0.45,
+	WalkAnimationId = "rbxassetid://507777826",
+	PanDownPushIn = 4,
+	SwayAmount = 0.12,
+	Shots = {
+		{ name = "HeroLow", startAt = 0, fov = 62, anchor = "group", from = { 15, 2, 1.1 }, to = { 9, -1.5, 0.9 }, focus = { 0, 0, 2.2 }, smoothing = 3 },
+		{ name = "Profile", startAt = 0.22, fov = 40, anchor = "group", from = { 4, 20, 1.6 }, to = { -3, 17, 1.3 }, focus = { 0, 0, 2 }, smoothing = 2.5 },
+		{ name = "RearCrane", startAt = 0.44, fov = 58, anchor = "group", from = { -8, -3, 1.4 }, to = { -13, -5, 8 }, focus = { 18, 0, 1 }, smoothing = 3 },
+		{ name = "HoleLow", startAt = 0.64, fov = 48, anchor = "hole", from = { -3, -15, 1.1 }, to = { -6, -11, 1.5 }, focus = { 0, 0, 2 }, smoothing = 4 },
+		{ name = "HoleSide", startAt = 0.85, fov = 55, anchor = "hole", from = { 6, 26, 10 }, to = { 2, 22, 8 }, focus = { 7, 0, 0.5 }, smoothing = 2.5 },
+	},
+	HoldSeconds = 1.5,
 	CharacterWaitSeconds = 10,
+	HoleName = "Main_Hole",
+	PinnedNames = { "Neighborhood", "Teleport_Players", "PORTAL" },
+	PreloadSpacing = 40,
+	DebugFillSlots = true,
+	DebugFillUserIds = { 1, 156, 261, 3, 13645, 56449, 2032622 },
 }
 
 return Config

@@ -17,6 +17,10 @@ if game.PlaceId ~= PlaceIds.Game then
 	return
 end
 
+pcall(function()
+	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
+end)
+
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 

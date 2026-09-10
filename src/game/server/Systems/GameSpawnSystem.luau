@@ -1,4 +1,5 @@
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
@@ -14,6 +15,7 @@ local SLOT_WAIT = 10
 local SLOT_HEIGHT_OFFSET = 3
 local SLOT_ATTRIBUTE = "SpawnSlot"
 local CUTSCENE_MARGIN = 10
+local WALK_END_ATTRIBUTE_PREFIX = "CutsceneWalkEnd"
 
 type Slot = {
 	index: number,
@@ -29,6 +31,7 @@ local slots: { Slot } = {}
 local cutsceneDone: { [Player]: boolean } = {}
 local spawned: { [Player]: boolean } = {}
 local disconnectCutscene: (() -> ())? = nil
+local debugRigs: { [Model]: boolean } = {}
 
 local function loadSlots()
 	local folder = Workspace:FindFirstChild(SLOTS_FOLDER_NAME, true) or Workspace:WaitForChild(SLOTS_FOLDER_NAME, SLOT_WAIT)
@@ -51,6 +54,12 @@ local function loadSlots()
 		return a.Name < b.Name
 	end)
 	for index, child in children do
+		if child:IsA("Model") then
+			local root = child:FindFirstChild("HumanoidRootPart")
+			if root and root:IsA("BasePart") then
+				root.Anchored = true
+			end
+		end
 		table.insert(slots, {
 			index = index,
 			cframe = child:GetPivot(),
@@ -84,8 +93,7 @@ local function assignSlot(player: Player): Slot?
 	return nil
 end
 
-local function dressRig(player: Player, slot: Slot)
-	local rig = slot.rig
+local function dressRigAs(rig: Model?, userId: number, label: string)
 	if not rig or not rig.Parent then
 		return
 	end
@@ -94,21 +102,55 @@ local function dressRig(player: Player, slot: Slot)
 		return
 	end
 	local ok, description = pcall(function()
-		return Players:GetHumanoidDescriptionFromUserId(player.UserId)
+		return Players:GetHumanoidDescriptionFromUserId(userId)
 	end)
 	if not ok or not description then
-		warn(("GameSpawnSystem: could not load appearance for %s: %s"):format(player.Name, tostring(description)))
+		warn(("GameSpawnSystem: could not load appearance for %s: %s"):format(label, tostring(description)))
 		return
 	end
 	local applied, err = pcall(function()
 		humanoid:ApplyDescription(description)
 	end)
 	if not applied then
-		warn(("GameSpawnSystem: could not apply appearance for %s: %s"):format(player.Name, tostring(err)))
+		warn(("GameSpawnSystem: could not apply appearance for %s: %s"):format(label, tostring(err)))
 	end
 end
 
+local function dressRig(player: Player, slot: Slot)
+	dressRigAs(slot.rig, player.UserId, player.Name)
+end
+
+local function debugFillEnabled(): boolean
+	return Config.Cutscene.DebugFillSlots == true and RunService:IsStudio()
+end
+
+local function fillDebugRigs()
+	local ids = Config.Cutscene.DebugFillUserIds
+	local pool = table.clone(ids)
+	for _, slot in slots do
+		local owner = slot.owner
+		if slot.rig and (not owner or owner.Parent ~= Players) then
+			local userId = if #pool > 0 then table.remove(pool, math.random(#pool)) else ids[math.random(#ids)]
+			debugRigs[slot.rig] = true
+			task.spawn(dressRigAs, slot.rig, userId, "debug slot " .. slot.index)
+		end
+	end
+end
+
+local function clearDebugRigs()
+	for rig in debugRigs do
+		if rig.Parent then
+			rig:Destroy()
+		end
+	end
+	table.clear(debugRigs)
+end
+
 local function removeUnusedRigs()
+	if debugFillEnabled() then
+		fillDebugRigs()
+		return
+	end
 	for _, slot in slots do
 		local owner = slot.owner
 		if slot.rig and (not owner or owner.Parent ~= Players) then
@@ -140,9 +182,14 @@ local function placeCharacter(player: Player, character: Model)
 	if not root then
 		return
 	end
-	local flatLook = Vector3.new(slot.cframe.LookVector.X, 0, slot.cframe.LookVector.Z)
+	local target = slot.cframe
+	local walkEnd = Workspace:GetAttribute(WALK_END_ATTRIBUTE_PREFIX .. slot.index)
+	if typeof(walkEnd) == "CFrame" then
+		target = walkEnd
+	end
+	local flatLook = Vector3.new(target.LookVector.X, 0, target.LookVector.Z)
 	local forward = if flatLook.Magnitude > 0.001 then flatLook.Unit else -Vector3.zAxis
-	local position = slot.cframe.Position + Vector3.new(0, SLOT_HEIGHT_OFFSET, 0)
+	local position = target.Position + Vector3.new(0, SLOT_HEIGHT_OFFSET, 0)
 	character:PivotTo(CFrame.lookAt(position, position + forward))
 end
 
@@ -169,7 +216,13 @@ end
 
 local function cutsceneTimeout(): number
 	local cutscene = Config.Cutscene
-	return cutscene.FlightSeconds + cutscene.HoldSeconds + Config.Party.MinLoadingSeconds + CUTSCENE_MARGIN
+	local walkSeconds = 0
+	local hole = Workspace:GetAttribute("CutsceneHoleCFrame")
+	local players = Workspace:GetAttribute("CutscenePlayersCFrame")
+	if typeof(hole) == "CFrame" and typeof(players) == "CFrame" then
+		walkSeconds = (hole.Position - players.Position).Magnitude / math.max(cutscene.WalkSpeed, 1)
+	end
+	return cutscene.PanDownSeconds + walkSeconds + cutscene.HoldSeconds + Config.Party.MinLoadingSeconds + CUTSCENE_MARGIN
 end
 
 local function spawnAfterCutscene(player: Player)
@@ -189,6 +242,7 @@ local function spawnAfterCutscene(player: Player)
 		slot.rig:Destroy()
 		slot.rig = nil
 	end
+	clearDebugRigs()
 	loadCharacter(player)
 end
 
@@ -232,6 +286,7 @@ function GameSpawnSystem.start()
 	loadSlots()
 	disconnectCutscene = Blink.CutsceneFinished.On(function(player)
 		cutsceneDone[player] = true
+		MatchSystem.releaseCutsceneMap(player)
 	end)
 	MatchSystem.onReady(removeUnusedRigs)
 	table.insert(connections, Players.PlayerAdded:Connect(watchPlayer))
@@ -258,6 +313,7 @@ function GameSpawnSystem.stop()
 	table.clear(cutsceneDone)
 	table.clear(spawned)
 	table.clear(slots)
+	table.clear(debugRigs)
 end
 
 return GameSpawnSystem

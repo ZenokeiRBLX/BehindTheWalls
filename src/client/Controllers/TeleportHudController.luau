@@ -124,6 +124,12 @@ local function bindHud(): boolean
 	return true
 end
 
+local function setCoreGuiEnabled(enabled: boolean)
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, enabled)
+	end)
+end
+
 local function setText(text: string)
 	if label then
 		label.Text = text
@@ -163,6 +169,7 @@ local function show(text: string, newPhase: Phase, onShown: (() -> ())?)
 	token += 1
 	local wasVisible = phase ~= "Hidden"
 	phase = newPhase
+	setCoreGuiEnabled(false)
 	setText(text)
 	if wasVisible then
 		tweenTo(shownFrameTransparency, shownTextTransparency, FADE_IN)
@@ -204,6 +211,9 @@ local function hide(onHidden: (() -> ())?)
 			return
 		end
 		hud.Enabled = false
+		if not Config.isGamePlace() then
+			setCoreGuiEnabled(true)
+		end
 		if onHidden then
 			onHidden()
 		end
@@ -282,6 +292,7 @@ function TeleportHudController.start()
 		local arriving = hasArrivingHud(playerGui :: PlayerGui)
 		shownAt = os.clock()
 		if arriving and bindHud() then
+			setCoreGuiEnabled(false)
 			if hud and hud:GetAttribute(PHASE_ATTRIBUTE) == "Waiting" then
 				phase = "Waiting"
 				setText(WAITING_PENDING_TEXT)
