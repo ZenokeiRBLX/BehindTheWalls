@@ -42,6 +42,7 @@ type CameraTarget = {
 
 type Walker = {
 	rig: Model,
+	slot: number,
 	startCFrame: CFrame,
 	endCFrame: CFrame,
 	formationEnd: Vector3,
@@ -210,6 +211,15 @@ local function slotIndex(instance: Instance): number?
 	return tonumber(instance.Name:match("%d+$"))
 end
 
+local function walkAnimationIdForSlot(slot: number): string
+	for _, phoneSlot in Config.Cutscene.PhoneWalkSlots do
+		if phoneSlot == slot then
+			return Config.Cutscene.PhoneWalkAnimationId
+		end
+	end
+	return Config.Cutscene.WalkAnimationId
+end
+
 local function preloadAssets(instances: { Instance })
 	if #instances == 0 then
 		return
@@ -233,9 +243,12 @@ local function preload(player: Player, scene: Scene)
 		streamAround(from:Lerp(to, step / samples))
 	end
 
-	local walkAnimation = Instance.new("Animation")
-	walkAnimation.AnimationId = Config.Cutscene.WalkAnimationId
-	local assets: { Instance } = { walkAnimation }
+	local assets: { Instance } = {}
+	for _, animationId in { Config.Cutscene.WalkAnimationId, Config.Cutscene.PhoneWalkAnimationId } do
+		local walkAnimation = Instance.new("Animation")
+		walkAnimation.AnimationId = animationId
+		table.insert(assets, walkAnimation)
+	end
 	task.wait(RIG_PRELOAD_WAIT)
 	local folder = Workspace:FindFirstChild(PLAYERS_FOLDER_NAME, true)
 	if folder then
@@ -246,11 +259,15 @@ local function preload(player: Player, scene: Scene)
 		end
 	end
 	preloadAssets(assets)
-	walkAnimation:Destroy()
+	for _, asset in assets do
+		if asset:IsA("Animation") then
+			asset:Destroy()
+		end
+	end
 	player:SetAttribute(PRELOADED_ATTRIBUTE, true)
 end
 
-local function loadWalkTrack(rig: Model): AnimationTrack?
+local function loadWalkTrack(rig: Model, slot: number): AnimationTrack?
 	local humanoid = rig:FindFirstChildOfClass("Humanoid")
 	if not humanoid then
 		return nil
@@ -261,7 +278,7 @@ local function loadWalkTrack(rig: Model): AnimationTrack?
 		animator.Parent = humanoid
 	end
 	local animation = Instance.new("Animation")
-	animation.AnimationId = Config.Cutscene.WalkAnimationId
+	animation.AnimationId = walkAnimationIdForSlot(slot)
 	local ok, track = pcall(function()
 		return (animator :: Animator):LoadAnimation(animation)
 	end)
@@ -285,7 +302,10 @@ local function collectWalkers(): { Walker }
 			continue
 		end
 		local index = slotIndex(child)
-		local finish = if index then readCFrameAttribute(WALK_END_ATTRIBUTE_PREFIX .. index) else nil
+		if not index then
+			continue
+		end
+		local finish = readCFrameAttribute(WALK_END_ATTRIBUTE_PREFIX .. index)
 		if not finish then
 			continue
 		end
@@ -295,6 +315,7 @@ local function collectWalkers(): { Walker }
 		local travel = (endPosition - startPosition):Dot(forward)
 		table.insert(list, {
 			rig = child,
+			slot = index,
 			startCFrame = CFrame.lookAt(startPosition, startPosition + forward),
 			endCFrame = CFrame.lookAt(endPosition, endPosition + forward),
 			formationEnd = startPosition + forward * travel,
@@ -384,7 +405,7 @@ local function walkToHole(token: number, scene: Scene)
 	local right = forward:Cross(Vector3.yAxis).Unit
 
 	for _, walker in walkers do
-		walker.track = loadWalkTrack(walker.rig)
+		walker.track = loadWalkTrack(walker.rig, walker.slot)
 		if walker.track then
 			walker.track:Play(0.3)
 			walker.track:AdjustSpeed(settings.WalkSpeed / math.max(settings.WalkAnimationReferenceSpeed, 1))
