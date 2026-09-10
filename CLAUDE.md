@@ -6,7 +6,7 @@ Guidance for AI coding agents working in this repository. `CLAUDE.md` and `AGENT
 
 `Behind Every Wall` (repo name `BehindTheWalls`) is a Roblox horror game synced through Rojo. The source of truth for scripts, module code, generated networking code, and explicitly Rojo-owned JSON-backed instances is under `src`, with the Roblox hierarchy defined by `default.project.json`. Everything else in the place file (map, UI templates, `StarterGui`, `Workspace`) is Studio-owned and edited through Roblox Studio.
 
-The experience has two places. The lobby (place `118916171408858`) is built from `default.project.json`; the actual game place (`115970043416367`) is built from `game.project.json`. Both trees share `src/shared`, `src/vendor`, `src/network`, the server data modules, and the bootstrap scripts. Only the lobby has the loading screen, intro, menu, and party flow; the game place has its own registries under `src/game`.
+The experience has two places, the lobby (`118916171408858`) and the actual game place (`115970043416367`), and both are built from the single `default.project.json` tree. Place ids live in `src/replicatedFirst/PlaceIds.luau` (exposed as `Config.Places` and `Config.isGamePlace()`), and the registries and `ReplicatedFirst` scripts pick their behavior from `game.PlaceId` at runtime. Only the lobby runs the loading screen, intro, menu, and party flow; the game place runs the systems and controllers under `src/game`, which the tree mounts as the `Game` subfolders of `Systems` and `Controllers`.
 
 The architecture mirrors the `Me-OW!` skeleton (`../Me-OW`): ProfileStore persistence, Replica replication, Blink networking, and the system/controller registry pattern.
 
@@ -27,34 +27,32 @@ This file applies to the entire repository.
 - The shell is PowerShell on Windows. The PATH `rojo` shim is unreliable in agent sessions; always call the pinned Rokit binaries directly:
   - Rojo: `& "$env:USERPROFILE\.rokit\tool-storage\rojo-rbx\rojo\7.7.0\rojo.exe"`
   - Blink: `& "$env:USERPROFILE\.rokit\tool-storage\1axen\blink\0.18.8\blink.exe"`
-- Start the Rojo server for the lobby with:
+- Start the Rojo server with:
   - `& "$env:USERPROFILE\.rokit\tool-storage\rojo-rbx\rojo\7.7.0\rojo.exe" serve default.project.json`
-- Serve the game place from a second Rojo instance on its own port, and point that place's Studio plugin at it:
-  - `& "$env:USERPROFILE\.rokit\tool-storage\rojo-rbx\rojo\7.7.0\rojo.exe" serve game.project.json --port 34873`
-- Validate both project trees after structure changes and before pushing:
+- Both Studio windows (lobby and game place) connect to that same server on the default port `34872`.
+- Validate the project tree after structure changes and before pushing:
   - `& "$env:USERPROFILE\.rokit\tool-storage\rojo-rbx\rojo\7.7.0\rojo.exe" sourcemap default.project.json`
-  - `& "$env:USERPROFILE\.rokit\tool-storage\rojo-rbx\rojo\7.7.0\rojo.exe" sourcemap game.project.json`
 - Regenerate Blink networking code after editing the IDL:
   - `& "$env:USERPROFILE\.rokit\tool-storage\1axen\blink\0.18.8\blink.exe" src/network/main.blink`
 
 ## Repository Layout
 
-- `src/server/Bootstrap.server.luau` is the server entry point; it starts `SystemRegistry`. It also warns at startup when a place has the wrong project tree synced in (the lobby tree in the game place or vice versa), which happens when both Studio sessions connect to the same Rojo port.
-- `src/server/Systems` contains server systems started by `SystemRegistry` (`DataSystem`, `SpawnSystem`, `PartySystem`).
+- `src/server/Bootstrap.server.luau` is the server entry point; it starts `SystemRegistry`.
+- `src/server/Systems` contains server systems started by `SystemRegistry` (`DataSystem`, `SpawnSystem`, `PartySystem`). `SystemRegistry` starts `DataSystem` everywhere, then either the lobby systems or the game systems from `Systems.Game` depending on `Config.isGamePlace()`.
 - `src/server/Modules` contains server-only services and helpers (`DataService`, `ProfileTemplate`, `ProfileStore`, `DataConfig`).
 - `src/client/Bootstrap.client.luau` is the client entry point; it starts `ControllerRegistry`.
-- `src/client/Controllers` contains client controllers started by `ControllerRegistry` (`PlayerDataController`, `IntroController`, `MusicController`, `FootstepsController`, `MenuButtonsController`, `PartyController`, `TeleportHudController`).
+- `src/client/Controllers` contains client controllers started by `ControllerRegistry` (`PlayerDataController`, `IntroController`, `MusicController`, `FootstepsController`, `MenuButtonsController`, `PartyController`, `TeleportHudController`). In the game place `ControllerRegistry` starts only `PlayerDataController`, `FootstepsController`, `TeleportHudController`, and `Controllers.Game.CutsceneController`.
 - `StarterGui.MenuPanels` (the Shop/Index/Badges/Settings panel frames) is Studio-owned; `MenuButtonsController` finds panels by name (`ShopFrame`, `IndexFrame`, `BadgesFrame`, `SettingsFrame`) and any button named `Exit`/`Close` inside a panel closes it.
 - `StarterGui.PartyGui` (the portal party/queue screen) is Studio-owned; `PartyController` drives it by child names (`Panel`, `SizeRow.Size_1..6`, `DifficultyRow.Easy/Normal/Hard`, `FriendsRow.FriendsToggle`, `MembersLabel`, `StartButton`, `LeaveButton`, `Toast`). The server side is `PartySystem`, which owns the `Workspace.Portal` portals, their `BORDER` touch walls, `TELEPORT` pads, and billboard text.
 - `StarterGui.Teleporting_HUD` (the full-screen teleport/loading overlay) is Studio-owned in the lobby; `TeleportHudController` drives it by child names (`Outer_Frame`, `TextLabel`). It is shared by both places: in the lobby it fades the HUD in on `PartyTeleporting`, registers it with `TeleportService:SetTeleportGui`, and acks with `PartyTeleportReady`; in the game place it picks up the arriving copy and shows `Loading Players... [arrived/expected]` from `ArrivalState` until the match gate opens, then holds for `Config.Party.MinLoadingSeconds` and the `CutscenePreloaded` attribute (up to `Config.Party.PreloadTimeoutSeconds`) before setting the `ArrivalComplete` player attribute and fading out.
 - `src/client/Modules` contains client-only modules (`IntroScene` owns the sewer intro scene effects), synced to `StarterPlayerScripts.Client.Modules`.
 - `src/shared/Modules` contains modules shared by client and server (`Config`, `GameInfo`), synced to `ReplicatedStorage.Shared.Modules`.
-- `src/replicatedFirst/Loading_Handler` is the `ReplicatedFirst` intro/loading screen (script plus JSON-backed GUI).
+- `src/replicatedFirst/Loading_Handler` is the `ReplicatedFirst` intro/loading screen (script plus JSON-backed GUI); it returns immediately in the game place. `src/replicatedFirst/PlaceIds.luau` is synced to `ReplicatedFirst.PlaceIds` so `ReplicatedFirst` scripts can check the place before `ReplicatedStorage` is available.
 - `src/network/main.blink` is the Blink IDL source.
 - `src/shared/Blink/Client.luau` and `src/shared/Blink/Server.luau` are generated by Blink. Do not hand-edit them.
 - `src/vendor` contains vendored dependencies (Replica). Avoid modifying vendor code unless the task explicitly requires it.
 - `src/server/Modules/ProfileStore.luau` is vendored ProfileStore. Treat it like vendor code.
-- `game.project.json` defines the game place. `src/game/server/Systems` holds its server systems (`SystemRegistry`, `MatchSystem`, `GameSpawnSystem`) and `src/game/client/Controllers` holds its client controllers (`ControllerRegistry`, `CutsceneController`). The game tree maps the shared `DataSystem`, `PlayerDataController`, `FootstepsController`, and `TeleportHudController` files from the lobby folders, and reuses `src/server/Modules` and both `Bootstrap` scripts. `src/game/replicatedFirst/TeleportArrival.client.luau` is the game place's `ReplicatedFirst` script: it parents the arriving teleport GUI into `PlayerGui` as `Teleporting_HUD` (or, when the player did not arrive by teleport, a clone of the Studio-owned `Teleporting_HUD` template from `ReplicatedFirst` or, failing that, `StarterGui`, started in the waiting state and tagged with the `ArrivalPhase` attribute) and removes the default loading screen.
+- `src/game/server/Systems` holds the game place server systems (`MatchSystem`, `GameSpawnSystem`), mounted at `ServerScriptService.Server.Systems.Game`, and `src/game/client/Controllers` holds its client controllers (`CutsceneController`), mounted at `StarterPlayerScripts.Client.Controllers.Game`. `src/game/replicatedFirst/TeleportArrival.client.luau` is synced to `ReplicatedFirst` in both places and returns immediately outside the game place; in the game place it it parents the arriving teleport GUI into `PlayerGui` as `Teleporting_HUD` (or, when the player did not arrive by teleport, a clone of the Studio-owned `Teleporting_HUD` template from `ReplicatedFirst` or, failing that, `StarterGui`, started in the waiting state and tagged with the `ArrivalPhase` attribute) and removes the default loading screen.
 - `Workspace.Cutscene_Camera`, `Workspace.Teleport_Players` (the `Player_1..5` R15 slot rigs), and the `Cutscene` ScreenGui (letterbox bars plus `Cutscene_Skip`, kept in `ReplicatedFirst` or `StarterGui`) are Studio-owned in the game place. `MatchSystem` publishes the cutscene inputs as `Workspace` attributes so they survive StreamingEnabled: `CutsceneCameraCFrame`/`CutsceneCameraFov` from the camera part (an optional `FieldOfView` attribute on it overrides `Config.Cutscene.FieldOfView`), `CutscenePlayersCFrame` (the slot group center facing their look direction), and `CutscenePath1..N` from an optional `Workspace.Cutscene_Path` folder of numbered parts. `CutsceneController` holds the camera Scriptable at the camera part from client start, pre-streams the route and sets the `CutscenePreloaded` player attribute, then once `ArrivalComplete` is set it shows the `Cutscene` GUI and flies a Catmull-Rom path (the published `Cutscene_Path` parts, or a generated low skim down the street and back) that returns to the camera part, tuned by `Config.Cutscene`. The flight end or `Cutscene_Skip` calls `CutsceneController.finish()`, which fires `CutsceneFinished`, waits for the character, and then releases the camera; `release()` hands the camera back immediately. `GameSpawnSystem` assigns each arriving player a slot (the `SpawnSlot` player attribute), applies that player's `HumanoidDescription` to the slot rig so the party is visible during the cutscene, destroys unused rigs when the match gate opens, and only loads a player's character (replacing their rig on the slot) after that client sends `CutsceneFinished` or the cutscene timeout passes.
 - `Config.Places` in `src/shared/Modules/Config.luau` holds both place ids. `PartySystem` teleports each party to `Config.Party.GamePlaceId` in a reserved server with the party's difficulty, size, friends-only flag, and `memberIds` roster as teleport data, after waiting up to a few seconds for each client's `PartyTeleportReady` ack; `MatchSystem` reads that data on arrival, exposes it through `getSettings()`, and can send players back with `returnToLobby()`. `MatchSystem` also tracks the arrival roster, broadcasts `ArrivalState`, and opens the match gate (`isReady()`/`onReady()`) once everyone has arrived or `Config.Party.ArrivalTimeoutSeconds` passes, dropping missing players from the count; `GameSpawnSystem` waits on that gate, then on each client's `CutsceneFinished`, before loading characters.
 
@@ -62,8 +60,8 @@ This file applies to the entire repository.
 
 - Prefer ModuleScripts for game logic. Keep Scripts and LocalScripts as thin bootstraps.
 - Server systems and client controllers expose `start()` and, when cleanup is needed, `stop()`.
-- When adding a server system, require it in `src/server/Systems/SystemRegistry.luau` and add it to `SYSTEMS`. Order matters: `DataSystem` starts first and gameplay systems that read profiles come after it. The game place has its own registry at `src/game/server/Systems/SystemRegistry.luau` with the same rules.
-- When adding a client controller, require it in `src/client/Controllers/ControllerRegistry.luau` and add it to `CONTROLLERS`. The game place uses `src/game/client/Controllers/ControllerRegistry.luau`.
+- When adding a server system, require it in `src/server/Systems/SystemRegistry.luau` and add it to the lobby or game list. Order matters: `DataSystem` starts first and gameplay systems that read profiles come after it. Game-only systems live in `src/game/server/Systems`.
+- When adding a client controller, require it in `src/client/Controllers/ControllerRegistry.luau` and add it to the lobby or game list. Game-only controllers live in `src/game/client/Controllers`.
 - Before writing new logic, look for an existing module that owns the behavior and extend it instead of duplicating it.
 - Guard repeated starts with an `isStarted` flag when the module owns connections, replicated state, or long-running tasks.
 - Store `RBXScriptConnection` values and disconnect them in `stop()` or cleanup paths.
@@ -102,7 +100,7 @@ This file applies to the entire repository.
 ## Before Finishing Work
 
 - Check the worktree with `git status --short`.
-- For script or project tree changes, run `& "$env:USERPROFILE\.rokit\tool-storage\rojo-rbx\rojo\7.7.0\rojo.exe" sourcemap default.project.json` and `& "$env:USERPROFILE\.rokit\tool-storage\rojo-rbx\rojo\7.7.0\rojo.exe" sourcemap game.project.json`.
+- For script or project tree changes, run `& "$env:USERPROFILE\.rokit\tool-storage\rojo-rbx\rojo\7.7.0\rojo.exe" sourcemap default.project.json`.
 - Run `git diff --check` before finishing code edits.
 - If you changed Blink IDL, confirm the generated Blink client/server files are regenerated and committed with it.
 - For behavior changes that depend on Roblox runtime behavior, verify in Studio when possible.

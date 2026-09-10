@@ -2,7 +2,6 @@
   "name": "BehindTheWalls",
   "tree": {
     "$className": "DataModel",
-
     "ReplicatedStorage": {
       "ReplicaClient": {
         "$path": "src/vendor/Replica/ReplicaClient.luau"
@@ -20,13 +19,18 @@
         }
       }
     },
-
     "ReplicatedFirst": {
+      "$ignoreUnknownInstances": true,
+      "PlaceIds": {
+        "$path": "src/replicatedFirst/PlaceIds.luau"
+      },
       "Loading_Handler": {
         "$path": "src/replicatedFirst/Loading_Handler"
+      },
+      "TeleportArrival": {
+        "$path": "src/game/replicatedFirst/TeleportArrival.client.luau"
       }
     },
-
     "ServerScriptService": {
       "$ignoreUnknownInstances": true,
       "ReplicaServer": {
@@ -39,7 +43,11 @@
         },
         "Systems": {
           "$className": "Folder",
-          "$path": "src/server/Systems"
+          "$path": "src/server/Systems",
+          "Game": {
+            "$className": "Folder",
+            "$path": "src/game/server/Systems"
+          }
         },
         "Modules": {
           "$className": "Folder",
@@ -47,12 +55,10 @@
         }
       }
     },
-
     "StarterGui": {
       "$className": "StarterGui",
       "$ignoreUnknownInstances": true
     },
-
     "StarterPlayer": {
       "StarterPlayerScripts": {
         "Client": {
@@ -62,7 +68,11 @@
           },
           "Controllers": {
             "$className": "Folder",
-            "$path": "src/client/Controllers"
+            "$path": "src/client/Controllers",
+            "Game": {
+              "$className": "Folder",
+              "$path": "src/game/client/Controllers"
+            }
           },
           "Modules": {
             "$className": "Folder",
@@ -71,7 +81,6 @@
         }
       }
     },
-
     "Workspace": {
       "$className": "Workspace",
       "$ignoreUnknownInstances": true

@@ -1,13 +1,18 @@
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
+
+local PlaceIds = require(ReplicatedFirst:WaitForChild("PlaceIds"))
+
 local Config = {}
 
 Config.GameName = "Behind Every Wall"
 Config.MaxPlayers = 12
 Config.Gravity = 196.2
 
-Config.Places = {
-	Lobby = 118916171408858,
-	Game = 115970043416367,
-}
+Config.Places = PlaceIds
+
+function Config.isGamePlace(): boolean
+	return game.PlaceId == PlaceIds.Game
+end
 
 Config.Party = {
 	MinSize = 1,

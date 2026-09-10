@@ -5,6 +5,11 @@ local Lighting = game:GetService("Lighting")     -- tool to control lighting eff
 local StarterGui = game:GetService("StarterGui") -- tool to control the built-in Roblox UI
 local UserInputService = game:GetService("UserInputService") -- tool to notice taps and clicks
 
+local PlaceIds = require(game:GetService("ReplicatedFirst"):WaitForChild("PlaceIds"))
+if game.PlaceId == PlaceIds.Game then
+	return
+end
+
 -- Hide the Roblox UI (player list, chat, backpack...) until the intro is fully over;
 -- the intro screen turns it back on after the player taps to continue
 pcall(function()

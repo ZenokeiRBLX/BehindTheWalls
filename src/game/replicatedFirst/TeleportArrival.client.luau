@@ -12,6 +12,11 @@ local WAITING_TEXT = "Loading Players..."
 local TEMPLATE_WAIT = 3
 local CHILD_WAIT = 5
 
+local PlaceIds = require(ReplicatedFirst:WaitForChild("PlaceIds"))
+if game.PlaceId ~= PlaceIds.Game then
+	return
+end
+
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
