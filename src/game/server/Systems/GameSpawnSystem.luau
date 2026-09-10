@@ -59,6 +59,10 @@ local function loadSlots()
 			if root and root:IsA("BasePart") then
 				root.Anchored = true
 			end
+			local humanoid = child:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+			end
 		end
 		table.insert(slots, {
 			index = index,
