@@ -168,14 +168,18 @@ local function isWalking(humanoid: Humanoid, rootPart: BasePart): boolean
 	return Vector3.new(velocity.X, 0, velocity.Z).Magnitude >= MIN_MOVE_SPEED
 end
 
-local function playStep(entry: TrackedCharacter)
-	if not isWithinRange(entry.rootPart) then
+function FootstepsController.playStepAt(rootPart: BasePart, material: Enum.Material)
+	if not isWithinRange(rootPart) then
 		return
 	end
-	local template = pickVariant(entry.humanoid.FloorMaterial)
+	local template = pickVariant(material)
 	if template then
-		playVariant(template, entry.rootPart, STEP_PITCH_MIN, STEP_PITCH_JITTER)
+		playVariant(template, rootPart, STEP_PITCH_MIN, STEP_PITCH_JITTER)
 	end
+end
+
+local function playStep(entry: TrackedCharacter)
+	FootstepsController.playStepAt(entry.rootPart, entry.humanoid.FloorMaterial)
 end
 
 local function playLanding(entry: TrackedCharacter)

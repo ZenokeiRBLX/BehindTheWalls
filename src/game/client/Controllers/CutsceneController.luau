@@ -9,6 +9,7 @@ local Workspace = game:GetService("Workspace")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Modules"):WaitForChild("Config"))
 local Blink = require(ReplicatedStorage:WaitForChild("Blink"):WaitForChild("Client"))
+local FootstepsController = require(script.Parent.Parent:WaitForChild("FootstepsController"))
 
 local CutsceneController = {}
 
@@ -35,6 +36,8 @@ local FOV_SMOOTHING = 6
 local RIG_PRELOAD_WAIT = 1.5
 local SWAY_SPEED = 0.9
 local WALK_RNG = Random.new()
+local STEP_RAY_LIFT = 2
+local STEP_RAY_LENGTH = 12
 
 type CameraTarget = {
 	cframe: CFrame,
@@ -44,10 +47,14 @@ type CameraTarget = {
 type Walker = {
 	rig: Model,
 	slot: number,
+	rootPart: BasePart?,
 	startCFrame: CFrame,
 	endCFrame: CFrame,
 	formationEnd: Vector3,
 	track: AnimationTrack?,
+	lastPosition: Vector3,
+	distanceSinceStep: number,
+	stepStride: number,
 }
 
 type Scene = {
@@ -292,12 +299,23 @@ local function loadWalkTrack(rig: Model, slot: number): AnimationTrack?
 	return track
 end
 
+local stepRaycastParams: RaycastParams?
+
+local function floorMaterialAt(position: Vector3): Enum.Material
+	local result = Workspace:Raycast(position + Vector3.yAxis * STEP_RAY_LIFT, Vector3.new(0, -STEP_RAY_LENGTH, 0), stepRaycastParams)
+	return if result then result.Material else Enum.Material.Concrete
+end
+
 local function collectWalkers(): { Walker }
 	local list: { Walker } = {}
 	local folder = Workspace:FindFirstChild(PLAYERS_FOLDER_NAME, true)
 	if not folder then
 		return list
 	end
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	raycastParams.FilterDescendantsInstances = { folder }
+	stepRaycastParams = raycastParams
 	for _, child in folder:GetChildren() do
 		if not child:IsA("Model") then
 			continue
@@ -314,13 +332,18 @@ local function collectWalkers(): { Walker }
 		local forward = flatForward(finish)
 		local endPosition = Vector3.new(finish.Position.X, startPosition.Y, finish.Position.Z)
 		local travel = (endPosition - startPosition):Dot(forward)
+		local rootPart = child.PrimaryPart or child:FindFirstChild("HumanoidRootPart")
 		table.insert(list, {
 			rig = child,
 			slot = index,
+			rootPart = if rootPart and rootPart:IsA("BasePart") then rootPart else nil,
 			startCFrame = CFrame.lookAt(startPosition, startPosition + forward),
 			endCFrame = CFrame.lookAt(endPosition, endPosition + forward),
 			formationEnd = startPosition + forward * travel,
 			track = nil,
+			lastPosition = startPosition,
+			distanceSinceStep = 0,
+			stepStride = math.max(Config.Cutscene.StepStride, 0.5),
 		})
 	end
 	return list
@@ -346,11 +369,25 @@ local function walkerPosition(walker: Walker, alpha: number): Vector3
 	return formation:Lerp(line, merge)
 end
 
+local function stepWalker(walker: Walker, position: Vector3)
+	local delta = position - walker.lastPosition
+	walker.lastPosition = position
+	walker.distanceSinceStep += Vector3.new(delta.X, 0, delta.Z).Magnitude
+	if walker.distanceSinceStep < walker.stepStride then
+		return
+	end
+	walker.distanceSinceStep -= walker.stepStride
+	if walker.rootPart then
+		FootstepsController.playStepAt(walker.rootPart, floorMaterialAt(position))
+	end
+end
+
 local function moveWalkers(alpha: number)
 	for _, walker in walkers do
 		if walker.rig.Parent then
 			local position = walkerPosition(walker, alpha)
 			walker.rig:PivotTo(CFrame.lookAt(position, position + walker.endCFrame.LookVector))
+			stepWalker(walker, position)
 		end
 	end
 end
@@ -416,7 +453,9 @@ local function walkToHole(token: number, scene: Scene)
 			if track.Length > 0 then
 				track.TimePosition = WALK_RNG:NextNumber(0, track.Length)
 			end
-			track:AdjustSpeed(baseAnimationSpeed * (1 + WALK_RNG:NextNumber(-variance, variance)))
+			local rate = 1 + WALK_RNG:NextNumber(-variance, variance)
+			track:AdjustSpeed(baseAnimationSpeed * rate)
+			walker.stepStride = math.max(Config.Cutscene.StepStride / rate, 0.5)
 		end
 	end
 

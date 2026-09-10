@@ -35,6 +35,7 @@ Config.Cutscene = {
 	WalkAnimationReferenceSpeed = 6.5,
 	WalkAnimationSpeedVariance = 0.15,
 	WalkAnimationFadeRange = { 0.2, 0.5 },
+	StepStride = 4.4,
 	StopDistance = 14,
 	LineSpacing = 3.5,
 	LineMergeStart = 0.45,
