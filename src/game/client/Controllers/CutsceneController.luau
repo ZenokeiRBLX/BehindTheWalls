@@ -34,6 +34,7 @@ local MAX_PRELOAD_SAMPLES = 24
 local FOV_SMOOTHING = 6
 local RIG_PRELOAD_WAIT = 1.5
 local SWAY_SPEED = 0.9
+local WALK_RNG = Random.new()
 
 type CameraTarget = {
 	cframe: CFrame,
@@ -404,11 +405,18 @@ local function walkToHole(token: number, scene: Scene)
 	local forward = flatForward(walkers[1].endCFrame)
 	local right = forward:Cross(Vector3.yAxis).Unit
 
+	local baseAnimationSpeed = settings.WalkSpeed / math.max(settings.WalkAnimationReferenceSpeed, 1)
+	local variance = math.clamp(settings.WalkAnimationSpeedVariance, 0, 0.9)
+	local fadeRange = settings.WalkAnimationFadeRange
 	for _, walker in walkers do
 		walker.track = loadWalkTrack(walker.rig, walker.slot)
 		if walker.track then
-			walker.track:Play(0.3)
-			walker.track:AdjustSpeed(settings.WalkSpeed / math.max(settings.WalkAnimationReferenceSpeed, 1))
+			local track = walker.track
+			track:Play(WALK_RNG:NextNumber(fadeRange[1], fadeRange[2]))
+			if track.Length > 0 then
+				track.TimePosition = WALK_RNG:NextNumber(0, track.Length)
+			end
+			track:AdjustSpeed(baseAnimationSpeed * (1 + WALK_RNG:NextNumber(-variance, variance)))
 		end
 	end
 
