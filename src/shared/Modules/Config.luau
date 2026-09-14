@@ -81,13 +81,15 @@ Config.Cutscene = {
 		CutsceneMusicFadeOutSeconds = 2.5,
 		SewerSoundName = "Sewer_Sound_Effect",
 		BoomName = "CinematicBoom2",
-		BoomLeadStuds = 10,
+		BoomLeadSeconds = 0.6,
 		BoneCrackName = "Bone_Crack",
 		BoneCrackSpeedRange = { 0.75, 1.35 },
 		BoneCrackVolumeScale = 1,
 		ScreamNames = { "SCREAM_1", "SCREAM_2", "SCREAM_3" },
 		ScreamSpeedRange = { 0.92, 1.08 },
 		ScreamVolumeScale = 1,
+		SplashName = "Water_Splash",
+		SplashVolumeScale = 1,
 		FootstepVolumeScale = 0.35,
 	},
 	Landing = {
@@ -104,7 +106,7 @@ Config.Cutscene = {
 	PinnedNames = { "Neighborhood", "Teleport_Players", "PORTAL" },
 	PreloadSpacing = 40,
 	DebugFillSlots = true,
-	DebugFillUserIds = { 1, 156, 261, 3, 13645, 56449, 2032622 },
+	DebugFillUserIds = { 603692115, 156, 261, 3, 13645, 56449, 2032622 },
 }
 
 return Config

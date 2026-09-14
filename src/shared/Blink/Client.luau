@@ -165,10 +165,12 @@ Queue.Reliable[5] = table.create(256)
 Queue.Reliable[6] = table.create(256)
 Queue.Reliable[7] = table.create(256)
 Queue.Reliable[10] = table.create(256)
+Queue.Reliable[13] = table.create(256)
 export type Difficulty = ("Easy" | "Normal" | "Hard")
 export type PartySettings = { maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean }
 export type PartyStateData = { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }
 export type ArrivalStateData = { arrived: number, expected: number, complete: boolean }
+export type CutsceneSkipData = { votes: number, total: number, complete: boolean }
 function SerdesFunctions.WriteEVENT_RequestSpawn(Value: nil): ()
 	-- Allocate BLOCK: 1 bytes
 	local BLOCK_START = Allocate(1)
@@ -288,6 +290,22 @@ function SerdesFunctions.WriteEVENT_CutsceneFinished(Value: nil): ()
 	buffer.writeu8(SendBuffer, BLOCK_START + 0, 11)
 end
 
+function SerdesFunctions.WriteEVENT_CutsceneSkipVote(Value: nil): ()
+	-- Allocate BLOCK: 1 bytes
+	local BLOCK_START = Allocate(1)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 12)
+end
+
+function SerdesFunctions.ReadEVENT_CutsceneSkipState(): ({ votes: number, total: number, complete: boolean })
+	-- Read BLOCK: 3 bytes
+	local BLOCK_START = Read(3)
+	local Value = {} :: any
+	Value.votes = buffer.readu8(RecieveBuffer, BLOCK_START + 0)
+	Value.total = buffer.readu8(RecieveBuffer, BLOCK_START + 1)
+	Value.complete = (buffer.readu8(RecieveBuffer, BLOCK_START + 2) == 1)
+	return Value
+end
+
 if not RunService:IsRunning() then
 	local NOOP = function() end
 	local Returns = table.freeze({
@@ -326,6 +344,12 @@ if not RunService:IsRunning() then
 	},
 	CutsceneFinished = {
 		Fire = NOOP
+	},
+	CutsceneSkipVote = {
+		Fire = NOOP
+	},
+	CutsceneSkipState = {
+		On = NOOP
 	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
@@ -418,6 +442,16 @@ Reliable.OnClientEvent:Connect(function(Buffer: buffer, Instances: {Instance})
 					warn("[Blink]: Event queue of \"ArrivalState\" exceeded 256, did you forget to implement a listener?")
 				end
 				table.insert(Queue.Reliable[10], {Value} :: {any})
+			end
+		elseif Index == 13 then
+			local Value: { votes: number, total: number, complete: boolean } = SerdesFunctions.ReadEVENT_CutsceneSkipState()
+			if Events.Reliable[13] ~= nil then
+				task.spawn(Events.Reliable[13], Value)
+			else
+				if #Queue.Reliable[13] > 256 then
+					warn("[Blink]: Event queue of \"CutsceneSkipState\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[13], {Value} :: {any})
 			end
 		end
 	end
@@ -547,6 +581,25 @@ local Returns = table.freeze({
 	CutsceneFinished = {
 		Fire = function(Value: nil): ()
 			SerdesFunctions.WriteEVENT_CutsceneFinished(Value)
+		end
+	},
+	CutsceneSkipVote = {
+		Fire = function(Value: nil): ()
+			SerdesFunctions.WriteEVENT_CutsceneSkipVote(Value)
+		end
+	},
+	CutsceneSkipState = {
+		On = function(Listener: (Value: { votes: number, total: number, complete: boolean }) -> ()): () -> ()
+			Events.Reliable[13] = Listener
+			for Index, Arguments in Queue.Reliable[13] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[13] = {}
+			return function (): ()
+				if Events.Reliable[13] == Listener then
+					Events.Reliable[13] = nil
+				end
+			end
 		end
 	},
 })

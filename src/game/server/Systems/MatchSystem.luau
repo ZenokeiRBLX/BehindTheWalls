@@ -15,6 +15,12 @@ export type MatchSettings = {
 	partySize: number,
 }
 
+export type SkipState = {
+	votes: number,
+	total: number,
+	complete: boolean,
+}
+
 export type ArrivalState = {
 	arrived: number,
 	expected: number,
@@ -51,6 +57,9 @@ local arrivalDeadline: number? = nil
 local gateOpen = false
 local readyCallbacks: { () -> () } = {}
 local lastBroadcast: ArrivalState? = nil
+local skipVotes: { [Player]: boolean } = {}
+local skipComplete = false
+local lastSkipBroadcast: SkipState? = nil
 local cutsceneModels: { Model } = {}
 local pinnedPlayers: { [Player]: boolean } = {}
 
@@ -133,6 +142,50 @@ end
 
 local function sendArrival(player: Player)
 	Blink.ArrivalState.Fire(player, MatchSystem.getArrivalState())
+end
+
+function MatchSystem.getSkipState(): SkipState
+	local votes = 0
+	local total = 0
+	for _, player in Players:GetPlayers() do
+		total += 1
+		if skipVotes[player] then
+			votes += 1
+		end
+	end
+	return {
+		votes = votes,
+		total = total,
+		complete = skipComplete,
+	}
+end
+
+local function broadcastSkip()
+	local state = MatchSystem.getSkipState()
+	local last = lastSkipBroadcast
+	if last and last.votes == state.votes and last.total == state.total and last.complete == state.complete then
+		return
+	end
+	lastSkipBroadcast = state
+	Blink.CutsceneSkipState.FireAll(state)
+end
+
+local function evaluateSkip()
+	if not skipComplete then
+		local state = MatchSystem.getSkipState()
+		if state.total > 0 and state.votes >= state.total then
+			skipComplete = true
+		end
+	end
+	broadcastSkip()
+end
+
+function MatchSystem.registerSkipVote(player: Player)
+	if skipVotes[player] then
+		return
+	end
+	skipVotes[player] = true
+	evaluateSkip()
 end
 
 local function broadcastArrival()
@@ -267,10 +320,14 @@ local function onPlayerAdded(player: Player)
 	entry.arrived = true
 	evaluateArrivals()
 	sendArrival(player)
+	Blink.CutsceneSkipState.Fire(player, MatchSystem.getSkipState())
+	evaluateSkip()
 end
 
 local function onPlayerRemoving(player: Player)
 	pinnedPlayers[player] = nil
+	skipVotes[player] = nil
+	evaluateSkip()
 	if gateOpen then
 		return
 	end
@@ -421,6 +478,7 @@ function MatchSystem.start()
 	task.spawn(publishCutscene)
 
 	Blink.ArrivalRequest.On(sendArrival)
+	Blink.CutsceneSkipVote.On(MatchSystem.registerSkipVote)
 	table.insert(connections, Players.PlayerAdded:Connect(onPlayerAdded))
 	table.insert(connections, Players.PlayerRemoving:Connect(onPlayerRemoving))
 	for _, player in Players:GetPlayers() do
@@ -454,6 +512,9 @@ function MatchSystem.stop()
 	arrivalDeadline = nil
 	gateOpen = false
 	lastBroadcast = nil
+	table.clear(skipVotes)
+	skipComplete = false
+	lastSkipBroadcast = nil
 end
 
 return MatchSystem

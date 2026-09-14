@@ -21,6 +21,18 @@ local RAGDOLL_ATTRIBUTE = "Ragdolled"
 local ROOT_JOINT_NAME = "Root"
 local RAGDOLL_WELD_NAME = "RagdollWeld"
 local ENGINE_SOCKET_SUFFIX = "BallSocket$"
+local FOOT_PART_NAMES = { "LeftFoot", "RightFoot", "Left Leg", "Right Leg" }
+local PIVOT_EPSILON = 0.001
+local GRIP_ATTACHMENT_SUFFIX = "GripAttachment$"
+
+type PropWeld = {
+	bodyPartName: string,
+	propName: string,
+	propPartName: string,
+	gripName: string?,
+	offset: CFrame,
+	gripOffset: CFrame?,
+}
 
 type Slot = {
 	index: number,
@@ -103,6 +115,154 @@ local function assignSlot(player: Player): Slot?
 	return nil
 end
 
+local function propRoot(part: BasePart, rig: Model): Instance
+	local node: Instance = part
+	while node.Parent and node.Parent ~= rig do
+		node = node.Parent
+	end
+	return node
+end
+
+local function crossingParts(rig: Model, weld: WeldConstraint): (BasePart?, BasePart?)
+	local part0, part1 = weld.Part0, weld.Part1
+	if not part0 or not part1 then
+		return nil, nil
+	end
+	if part0.Parent == rig and part1.Parent ~= rig then
+		return part0, part1
+	end
+	if part1.Parent == rig and part0.Parent ~= rig then
+		return part1, part0
+	end
+	return nil, nil
+end
+
+local function gripAttachment(bodyPart: BasePart): Attachment?
+	for _, child in bodyPart:GetChildren() do
+		if child:IsA("Attachment") and child.Name:match(GRIP_ATTACHMENT_SUFFIX) then
+			return child
+		end
+	end
+	return nil
+end
+
+local function capturePropWelds(rig: Model): ({ PropWeld }, { BasePart })
+	local captured: { PropWeld } = {}
+	local held: { BasePart } = {}
+	for _, descendant in rig:GetDescendants() do
+		if not descendant:IsA("WeldConstraint") then
+			continue
+		end
+		local bodyPart, propPart = crossingParts(rig, descendant)
+		if not bodyPart or not propPart then
+			continue
+		end
+		local prop = propRoot(propPart, rig)
+		if not prop:IsA("PVInstance") then
+			continue
+		end
+		local propPivot = (prop :: PVInstance):GetPivot()
+		local grip = gripAttachment(bodyPart)
+		table.insert(captured, {
+			bodyPartName = bodyPart.Name,
+			propName = prop.Name,
+			propPartName = propPart.Name,
+			gripName = if grip then grip.Name else nil,
+			offset = bodyPart.CFrame:ToObjectSpace(propPivot),
+			gripOffset = if grip then grip.WorldCFrame:ToObjectSpace(propPivot) else nil,
+		})
+		if prop:IsA("BasePart") and not prop.Anchored then
+			prop.Anchored = true
+			table.insert(held, prop)
+		end
+		for _, part in prop:GetDescendants() do
+			if part:IsA("BasePart") and not part.Anchored then
+				part.Anchored = true
+				table.insert(held, part)
+			end
+		end
+	end
+	return captured, held
+end
+
+local function restorePropWelds(rig: Model, captured: { PropWeld }, held: { BasePart })
+	for _, descendant in rig:GetDescendants() do
+		if descendant:IsA("WeldConstraint") then
+			local bodyPart, propPart = crossingParts(rig, descendant)
+			if bodyPart and propPart then
+				descendant:Destroy()
+			end
+		end
+	end
+	for _, entry in captured do
+		local bodyPart = rig:FindFirstChild(entry.bodyPartName)
+		local prop = rig:FindFirstChild(entry.propName)
+		if not (bodyPart and bodyPart:IsA("BasePart") and prop and prop:IsA("PVInstance")) then
+			warn(("GameSpawnSystem: could not reattach %s to %s"):format(entry.propName, entry.bodyPartName))
+			continue
+		end
+		local propPart = if prop:IsA("BasePart") then prop else prop:FindFirstChild(entry.propPartName, true)
+		if not (propPart and propPart:IsA("BasePart")) then
+			warn(("GameSpawnSystem: could not find %s inside %s"):format(entry.propPartName, entry.propName))
+			continue
+		end
+		local grip = if entry.gripName then bodyPart:FindFirstChild(entry.gripName) else nil
+		if grip and grip:IsA("Attachment") and entry.gripOffset then
+			prop:PivotTo(grip.WorldCFrame * entry.gripOffset)
+		else
+			prop:PivotTo(bodyPart.CFrame * entry.offset)
+		end
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = bodyPart
+		weld.Part1 = propPart
+		weld.Parent = bodyPart
+	end
+	for _, part in held do
+		if part.Parent then
+			part.Anchored = false
+		end
+	end
+end
+
+local function lowestFootY(rig: Model): number?
+	local lowest: number? = nil
+	for _, name in FOOT_PART_NAMES do
+		local part = rig:FindFirstChild(name)
+		if part and part:IsA("BasePart") then
+			local bottom = part.Position.Y - part.Size.Y / 2
+			lowest = if lowest then math.min(lowest, bottom) else bottom
+		end
+	end
+	if lowest then
+		return lowest
+	end
+	local ok, cframe, size = pcall(function()
+		return rig:GetBoundingBox()
+	end)
+	if not ok or typeof(cframe) ~= "CFrame" then
+		return nil
+	end
+	return cframe.Position.Y - (size :: Vector3).Y / 2
+end
+
+local function alignPivotToFeet(rig: Model)
+	local feetY = lowestFootY(rig)
+	if not feetY then
+		return
+	end
+	local pivot = rig:GetPivot()
+	local delta = feetY - pivot.Position.Y
+	if math.abs(delta) < PIVOT_EPSILON then
+		return
+	end
+	local primary = rig.PrimaryPart
+	if primary then
+		primary.PivotOffset += primary.CFrame:VectorToObjectSpace(Vector3.new(0, delta, 0))
+	else
+		rig.WorldPivot = pivot + Vector3.new(0, delta, 0)
+	end
+end
+
 local function dressRigAs(rig: Model?, userId: number, label: string)
 	if not rig or not rig.Parent then
 		return
@@ -118,12 +278,25 @@ local function dressRigAs(rig: Model?, userId: number, label: string)
 		warn(("GameSpawnSystem: could not load appearance for %s: %s"):format(label, tostring(description)))
 		return
 	end
+	local standing = rig:GetPivot()
+	local props, held = capturePropWelds(rig)
 	local applied, err = pcall(function()
 		humanoid:ApplyDescription(description)
 	end)
 	if not applied then
 		warn(("GameSpawnSystem: could not apply appearance for %s: %s"):format(label, tostring(err)))
 	end
+	if not rig.Parent then
+		return
+	end
+	restorePropWelds(rig, props, held)
+	alignPivotToFeet(rig)
+	rig:PivotTo(standing)
+	local root = rig.PrimaryPart or rig:FindFirstChild("HumanoidRootPart")
+	if root and root:IsA("BasePart") then
+		root.Anchored = true
+	end
+	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 end
 
 local function dressRig(player: Player, slot: Slot)
@@ -136,11 +309,13 @@ end
 
 local function fillDebugRigs()
 	local ids = Config.Cutscene.DebugFillUserIds
-	local pool = table.clone(ids)
+	if #ids == 0 then
+		return
+	end
 	for _, slot in slots do
 		local owner = slot.owner
 		if slot.rig and (not owner or owner.Parent ~= Players) then
-			local userId = if #pool > 0 then table.remove(pool, math.random(#pool)) else ids[math.random(#ids)]
+			local userId = ids[(slot.index - 1) % #ids + 1]
 			debugRigs[slot.rig] = true
 			task.spawn(dressRigAs, slot.rig, userId, "debug slot " .. slot.index)
 		end
@@ -400,6 +575,7 @@ function GameSpawnSystem.start()
 	loadSlots()
 	disconnectCutscene = Blink.CutsceneFinished.On(function(player)
 		cutsceneDone[player] = true
+		MatchSystem.registerSkipVote(player)
 		MatchSystem.releaseCutsceneMap(player)
 	end)
 	MatchSystem.onReady(removeUnusedRigs)

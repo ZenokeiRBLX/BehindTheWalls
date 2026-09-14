@@ -103,3 +103,22 @@ event CutsceneFinished {
     Type: Reliable,
     Call: SingleAsync
 }
+
+struct CutsceneSkipData {
+    votes: u8,
+    total: u8,
+    complete: boolean
+}
+
+event CutsceneSkipVote {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync
+}
+
+event CutsceneSkipState {
+    From: Server,
+    Type: Reliable,
+    Call: SingleAsync,
+    Data: CutsceneSkipData
+}

@@ -168,10 +168,12 @@ Queue.Reliable[3] = table.create(256)
 Queue.Reliable[8] = table.create(256)
 Queue.Reliable[9] = table.create(256)
 Queue.Reliable[11] = table.create(256)
+Queue.Reliable[12] = table.create(256)
 export type Difficulty = ("Easy" | "Normal" | "Hard")
 export type PartySettings = { maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean }
 export type PartyStateData = { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }
 export type ArrivalStateData = { arrived: number, expected: number, complete: boolean }
+export type CutsceneSkipData = { votes: number, total: number, complete: boolean }
 function SerdesFunctions.ReadEVENT_RequestSpawn(): (nil)
 	return nil
 end
@@ -283,6 +285,19 @@ function SerdesFunctions.ReadEVENT_CutsceneFinished(): (nil)
 	return nil
 end
 
+function SerdesFunctions.ReadEVENT_CutsceneSkipVote(): (nil)
+	return nil
+end
+
+function SerdesFunctions.WriteEVENT_CutsceneSkipState(Value: { votes: number, total: number, complete: boolean }): ()
+	-- Allocate BLOCK: 4 bytes
+	local BLOCK_START = Allocate(4)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 13)
+	buffer.writeu8(SendBuffer, BLOCK_START + 1, Value.votes)
+	buffer.writeu8(SendBuffer, BLOCK_START + 2, Value.total)
+	buffer.writeu8(SendBuffer, BLOCK_START + 3, Value.complete and 1 or 0)
+end
+
 if not RunService:IsRunning() then
 	local NOOP = function() end
 	local Returns = table.freeze({
@@ -336,6 +351,15 @@ if not RunService:IsRunning() then
 	},
 	CutsceneFinished = {
 		On = NOOP
+	},
+	CutsceneSkipVote = {
+		On = NOOP
+	},
+	CutsceneSkipState = {
+		Fire = NOOP,
+		FireAll = NOOP,
+		FireList = NOOP,
+		FireExcept = NOOP
 	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
@@ -468,6 +492,16 @@ Reliable.OnServerEvent:Connect(function(Player: Player, Buffer: buffer, Instance
 					warn("[Blink]: Event queue of \"CutsceneFinished\" exceeded 256, did you forget to implement a listener?")
 				end
 				table.insert(Queue.Reliable[11], {Player, Value} :: {any})
+			end
+		elseif Index == 12 then
+			local Value: nil = SerdesFunctions.ReadEVENT_CutsceneSkipVote()
+			if Events.Reliable[12] ~= nil then
+				task.spawn(Events.Reliable[12], Player, Value)
+			else
+				if #Queue.Reliable[12] > 256 then
+					warn("[Blink]: Event queue of \"CutsceneSkipVote\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[12], {Player, Value} :: {any})
 			end
 		end
 	end
@@ -821,6 +855,66 @@ local Returns = table.freeze({
 				end
 			end
 		end
+	},
+	CutsceneSkipVote = {
+		On = function(Listener: (Player: Player, Value: nil) -> ()): () -> ()
+			Events.Reliable[12] = Listener
+			for Index, Arguments in Queue.Reliable[12] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[12] = {}
+			return function (): ()
+				if Events.Reliable[12] == Listener then
+					Events.Reliable[12] = nil
+				end
+			end
+		end
+	},
+	CutsceneSkipState = {
+		Fire = function(Player: Player, Value: { votes: number, total: number, complete: boolean }): ()
+			Load(PlayersMap[Player])
+			SerdesFunctions.WriteEVENT_CutsceneSkipState(Value)
+			PlayersMap[Player] = Save()
+		end,
+		FireAll = function(Value: { votes: number, total: number, complete: boolean }): ()
+			Load()
+			SerdesFunctions.WriteEVENT_CutsceneSkipState(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireList = function(List: {Player}, Value: { votes: number, total: number, complete: boolean }): ()
+			Load()
+			SerdesFunctions.WriteEVENT_CutsceneSkipState(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in List do
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
+		FireExcept = function(Except: Player, Value: { votes: number, total: number, complete: boolean }): ()
+			Load()
+			SerdesFunctions.WriteEVENT_CutsceneSkipState(Value)
+			local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances
+			for _, Player in Players:GetPlayers() do
+				if Player == Except then
+					continue
+				end
+				Load(PlayersMap[Player])
+				local Position = Allocate(Size)
+				buffer.copy(SendBuffer, Position, Buffer, 0, Size)
+				table.move(Instances, 1, #Instances, #SendInstances + 1, SendInstances)
+				PlayersMap[Player] = Save()
+			end
+		end,
 	},
 })
 type BLINK_EVENTS_SYMBOL = typeof(Returns)

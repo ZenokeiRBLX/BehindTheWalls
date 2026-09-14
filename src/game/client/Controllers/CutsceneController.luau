@@ -34,12 +34,15 @@ local GUI_NAME = "Cutscene"
 local FADE_GUI_NAME = "CutsceneFade"
 local FADE_DISPLAY_ORDER = 1000
 local SKIP_BUTTON_NAME = "Cutscene_Skip"
+local SKIP_VOTES_TEXT = "%d/%d Votes"
+local SKIP_VOTES_PATTERN = "%d+%s*/%s*%d+"
 local ARRIVAL_COMPLETE_ATTRIBUTE = "ArrivalComplete"
 local ARRIVAL_WAIT_MARGIN = 15
 local ATTRIBUTE_TIMEOUT = 5
 local MAX_PRELOAD_SAMPLES = 24
 local FOV_SMOOTHING = 6
 local RIG_PRELOAD_WAIT = 1.5
+local PIVOT_EPSILON = 0.001
 local SWAY_SPEED = 0.9
 local WALK_RNG = Random.new()
 local STEP_RAY_LIFT = 2
@@ -47,6 +50,7 @@ local STEP_RAY_LENGTH = 12
 local FALL_ROLLOFF_MIN = 10
 local FALL_ROLLOFF_MAX = 250
 local FALL_SOUND_LIFETIME = 8
+local IMPACT_PART_NAMES = { "LowerTorso", "UpperTorso", "Torso", "LeftFoot", "RightFoot" }
 local ROOT_JOINT_NAME = "Root"
 local TORSO_PARTS = { HumanoidRootPart = true, LowerTorso = true, UpperTorso = true }
 local LIFT_ATTACHMENT_NAME = "CutsceneLift"
@@ -115,6 +119,9 @@ local currentFov: number? = nil
 local sequenceToken = 0
 local walkers: { Walker } = {}
 local cameraRig: CameraRig? = nil
+local skipLabel: TextLabel? = nil
+local skipState: Blink.CutsceneSkipData? = nil
+local skipDisconnect: (() -> ())? = nil
 
 local function setCoreGuiEnabled(enabled: boolean)
 	pcall(function()
@@ -809,6 +816,9 @@ local function diveIntoHole(token: number, holeGround: Vector3)
 	local bottom = holeGround - Vector3.yAxis * fall.DiveDepth
 	local fallbackFocus = holeGround - Vector3.yAxis * 60
 	local startFocus = if cameraRig then cameraRig.focus else holeGround
+	local crossSpan = math.max(fall.RiseHeight + fall.DiveDepth, PIVOT_EPSILON)
+	local crossTime = riseSeconds + math.sqrt(math.clamp(fall.RiseHeight / crossSpan, 0, 1)) * plungeSeconds
+	local boomTime = math.max(crossTime - Config.Cutscene.Audio.BoomLeadSeconds, 0)
 	local boomPlayed = false
 	local startTime = os.clock()
 	while not finished and sequenceToken == token do
@@ -828,7 +838,7 @@ local function diveIntoHole(token: number, holeGround: Vector3)
 			focus = position - Vector3.yAxis
 		end
 		currentCFrame = CFrame.lookAt(position, focus)
-		if not boomPlayed and elapsed >= riseSeconds and position.Y <= holeGround.Y + Config.Cutscene.Audio.BoomLeadStuds then
+		if not boomPlayed and elapsed >= boomTime then
 			boomPlayed = true
 			playSound(Config.Cutscene.Audio.BoomName)
 		end
@@ -910,6 +920,38 @@ local function runSequence(scene: Scene)
 	end
 end
 
+local function findVotesLabel(button: Instance): TextLabel?
+	local fallback: TextLabel? = nil
+	for _, descendant in button:GetDescendants() do
+		if descendant:IsA("TextLabel") then
+			local text = descendant.Text
+			if text:lower():find("vote") then
+				return descendant
+			end
+			if not fallback and text:match(SKIP_VOTES_PATTERN) then
+				fallback = descendant
+			end
+		end
+	end
+	return fallback
+end
+
+local function applySkipState()
+	local state = skipState
+	local target = skipLabel
+	if state and target then
+		target.Text = SKIP_VOTES_TEXT:format(state.votes, state.total)
+	end
+end
+
+local function onSkipState(state: Blink.CutsceneSkipData)
+	skipState = state
+	applySkipState()
+	if state.complete and isStarted then
+		CutsceneController.finish()
+	end
+end
+
 local function resolveGui(playerGui: PlayerGui): ScreenGui?
 	local existing = playerGui:FindFirstChild(GUI_NAME)
 	if existing and existing:IsA("ScreenGui") then
@@ -937,8 +979,10 @@ local function showGui(playerGui: PlayerGui)
 	screen.Enabled = true
 	local skip = screen:FindFirstChild(SKIP_BUTTON_NAME, true)
 	if skip and skip:IsA("GuiButton") then
+		skipLabel = findVotesLabel(skip)
+		applySkipState()
 		table.insert(connections, skip.Activated:Connect(function()
-			CutsceneController.finish()
+			Blink.CutsceneSkipVote.Fire()
 		end))
 	end
 end
@@ -953,6 +997,36 @@ local function waitForArrival(player: Player)
 	end
 end
 
+local function playSplashOnImpact(character: Model)
+	local audio = Config.Cutscene.Audio
+	local touches: { RBXScriptConnection } = {}
+	local fired = false
+	local function onTouched(hit: BasePart)
+		if fired or hit:IsDescendantOf(character) then
+			return
+		end
+		fired = true
+		for _, touch in touches do
+			touch:Disconnect()
+		end
+		table.clear(touches)
+		local root = character:FindFirstChild("HumanoidRootPart")
+		if root and root:IsA("BasePart") then
+			playSoundAt(audio.SplashName, root, audio.SplashVolumeScale, nil)
+		else
+			playSound(audio.SplashName)
+		end
+	end
+	for _, name in IMPACT_PART_NAMES do
+		local part = character:FindFirstChild(name)
+		if part and part:IsA("BasePart") then
+			local touch = part.Touched:Connect(onTouched)
+			table.insert(touches, touch)
+			table.insert(connections, touch)
+		end
+	end
+end
+
 local function landCharacter(character: Model)
 	local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 5)
 	if not humanoid or not humanoid:IsA("Humanoid") then
@@ -960,6 +1034,7 @@ local function landCharacter(character: Model)
 	end
 	local settings = Config.Cutscene.Landing
 	playSound(Config.Cutscene.Audio.SewerSoundName)
+	playSplashOnImpact(character)
 	local function apply()
 		local root = character:FindFirstChild("HumanoidRootPart")
 		if character:GetAttribute(RAGDOLL_ATTRIBUTE) then
@@ -1051,6 +1126,7 @@ function CutsceneController.start()
 	end
 	isStarted = true
 	setCoreGuiEnabled(false)
+	skipDisconnect = Blink.CutsceneSkipState.On(onSkipState)
 
 	task.spawn(function()
 		local player = Players.LocalPlayer
@@ -1100,6 +1176,12 @@ function CutsceneController.stop()
 		return
 	end
 	isStarted = false
+	if skipDisconnect then
+		skipDisconnect()
+		skipDisconnect = nil
+	end
+	skipLabel = nil
+	skipState = nil
 	for _, connection in connections do
 		connection:Disconnect()
 	end
