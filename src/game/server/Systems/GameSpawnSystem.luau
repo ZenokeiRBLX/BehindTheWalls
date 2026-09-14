@@ -6,6 +6,7 @@ local Workspace = game:GetService("Workspace")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Modules"):WaitForChild("Config"))
 local Blink = require(ReplicatedStorage:WaitForChild("Blink"):WaitForChild("Server"))
+local WRagdoll = require(ReplicatedStorage:WaitForChild("WRagdoll"))
 local MatchSystem = require(script.Parent:WaitForChild("MatchSystem"))
 
 local GameSpawnSystem = {}
@@ -16,6 +17,10 @@ local SLOT_HEIGHT_OFFSET = 3
 local SLOT_ATTRIBUTE = "SpawnSlot"
 local CUTSCENE_MARGIN = 10
 local WALK_END_ATTRIBUTE_PREFIX = "CutsceneWalkEnd"
+local RAGDOLL_ATTRIBUTE = "Ragdolled"
+local ROOT_JOINT_NAME = "Root"
+local RAGDOLL_WELD_NAME = "RagdollWeld"
+local ENGINE_SOCKET_SUFFIX = "BallSocket$"
 
 type Slot = {
 	index: number,
@@ -32,6 +37,7 @@ local cutsceneDone: { [Player]: boolean } = {}
 local spawned: { [Player]: boolean } = {}
 local disconnectCutscene: (() -> ())? = nil
 local debugRigs: { [Model]: boolean } = {}
+local landing: { [Player]: boolean } = {}
 
 local function loadSlots()
 	local folder = Workspace:FindFirstChild(SLOTS_FOLDER_NAME, true) or Workspace:WaitForChild(SLOTS_FOLDER_NAME, SLOT_WAIT)
@@ -177,13 +183,112 @@ local function loadCharacter(player: Player)
 	end
 end
 
-local function placeCharacter(player: Player, character: Model)
-	local slot = findSlot(player) or assignSlot(player)
-	if not slot then
+local function findLandingModel(): Instance?
+	return Workspace:FindFirstChild(Config.Cutscene.Landing.ModelName, true)
+end
+
+local function findLandingSpawn(): SpawnLocation?
+	local model = findLandingModel()
+	if not model then
+		return nil
+	end
+	local spawn = model:FindFirstChildWhichIsA("SpawnLocation", true)
+	return spawn
+end
+
+local function anchorLandingModel()
+	local model = findLandingModel()
+	if not model then
+		warn("GameSpawnSystem: Workspace." .. Config.Cutscene.Landing.ModelName .. " not found, landing spawn unavailable")
 		return
 	end
+	local anchored = 0
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") and not descendant.Anchored then
+			descendant.Anchored = true
+			anchored += 1
+		end
+	end
+	if anchored > 0 then
+		warn(("GameSpawnSystem: anchored %d loose parts under %s; anchor the model in Studio"):format(anchored, model:GetFullName()))
+	end
+end
+
+local function setEngineJoints(character: Model, enabled: boolean)
+	for _, descendant in character:GetDescendants() do
+		local isJoint = descendant:IsA("AnimationConstraint") and descendant.Name ~= ROOT_JOINT_NAME
+		local isSocket = descendant:IsA("BallSocketConstraint") and descendant.Name:match(ENGINE_SOCKET_SUFFIX) ~= nil
+		if isJoint or isSocket then
+			descendant.Enabled = enabled
+		end
+	end
+end
+
+local function ragdollCharacter(character: Model, humanoid: Humanoid)
+	humanoid.RequiresNeck = false
+	humanoid.BreakJointsOnDeath = false
+	setEngineJoints(character, false)
+	local ok, err = pcall(WRagdoll.TurnRagdoll, WRagdoll, humanoid)
+	if not ok then
+		warn(("GameSpawnSystem: could not ragdoll %s: %s"):format(character.Name, tostring(err)))
+	end
+	character:SetAttribute(RAGDOLL_ATTRIBUTE, true)
+end
+
+local function restoreCharacter(character: Model, humanoid: Humanoid)
+	for _, descendant in character:GetDescendants() do
+		local isOwnSocket = descendant:IsA("BallSocketConstraint") and descendant.Name:match(ENGINE_SOCKET_SUFFIX) == nil
+		local isWeld = descendant:IsA("WeldConstraint") and descendant.Name == RAGDOLL_WELD_NAME
+		if isOwnSocket or isWeld then
+			descendant:Destroy()
+		elseif descendant:IsA("Motor6D") then
+			descendant.Enabled = true
+		end
+	end
+	setEngineJoints(character, true)
+	local rootPart = character.PrimaryPart
+	if rootPart then
+		rootPart.CanCollide = true
+	end
+	humanoid.RequiresNeck = true
+	humanoid.BreakJointsOnDeath = true
+	humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+	character:SetAttribute(RAGDOLL_ATTRIBUTE, false)
+end
+
+local function landCharacter(character: Model, spawn: SpawnLocation)
+	local settings = Config.Cutscene.Landing
+	local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 10)
+	if not humanoid or not humanoid:IsA("Humanoid") then
+		return
+	end
+	local position = spawn.Position + Vector3.new(0, settings.DropHeight, 0)
+	local tilt = math.rad(settings.TiltDegrees)
+	character:PivotTo(CFrame.new(position) * CFrame.Angles(tilt, math.random() * math.pi * 2, 0))
+	ragdollCharacter(character, humanoid)
+	task.delay(settings.RagdollSeconds, function()
+		if character.Parent and humanoid.Parent == character and humanoid.Health > 0 then
+			restoreCharacter(character, humanoid)
+		end
+	end)
+end
+
+local function placeCharacter(player: Player, character: Model)
 	local root = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart", 10)
 	if not root then
+		return
+	end
+	local isLanding = landing[player] == true
+	landing[player] = nil
+	local spawn = findLandingSpawn()
+	if spawn then
+		if isLanding then
+			landCharacter(character, spawn)
+		end
+		return
+	end
+	local slot = findSlot(player) or assignSlot(player)
+	if not slot then
 		return
 	end
 	local target = slot.cframe
@@ -226,7 +331,9 @@ local function cutsceneTimeout(): number
 	if typeof(hole) == "CFrame" and typeof(players) == "CFrame" then
 		walkSeconds = (hole.Position - players.Position).Magnitude / math.max(cutscene.WalkSpeed, 1)
 	end
-	return cutscene.PanDownSeconds + walkSeconds + cutscene.HoldSeconds + Config.Party.MinLoadingSeconds + CUTSCENE_MARGIN
+	local approachSeconds = (cutscene.StopDistance + (Config.Party.MaxSize - 1) * cutscene.LineSpacing) / math.max(cutscene.WalkSpeed, 1)
+	local diveSeconds = cutscene.Fall.DiveDelay + cutscene.Fall.RiseSeconds + cutscene.Fall.PlungeSeconds
+	return cutscene.PanDownSeconds + walkSeconds + approachSeconds + diveSeconds + cutscene.HoldSeconds + Config.Party.MinLoadingSeconds + CUTSCENE_MARGIN
 end
 
 local function spawnAfterCutscene(player: Player)
@@ -247,6 +354,7 @@ local function spawnAfterCutscene(player: Player)
 		slot.rig = nil
 	end
 	clearDebugRigs()
+	landing[player] = true
 	loadCharacter(player)
 end
 
@@ -271,6 +379,7 @@ local function onPlayerRemoving(player: Player)
 	respawning[player] = nil
 	cutsceneDone[player] = nil
 	spawned[player] = nil
+	landing[player] = nil
 	local slot = findSlot(player)
 	if slot then
 		slot.owner = nil
@@ -287,6 +396,7 @@ function GameSpawnSystem.start()
 	end
 	isStarted = true
 
+	anchorLandingModel()
 	loadSlots()
 	disconnectCutscene = Blink.CutsceneFinished.On(function(player)
 		cutsceneDone[player] = true
@@ -316,6 +426,7 @@ function GameSpawnSystem.stop()
 	table.clear(respawning)
 	table.clear(cutsceneDone)
 	table.clear(spawned)
+	table.clear(landing)
 	table.clear(slots)
 	table.clear(debugRigs)
 end

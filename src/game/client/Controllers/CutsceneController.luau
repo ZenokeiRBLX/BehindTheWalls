@@ -4,11 +4,13 @@ local ReplicatedFirst = game:GetService("ReplicatedFirst")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Modules"):WaitForChild("Config"))
 local Blink = require(ReplicatedStorage:WaitForChild("Blink"):WaitForChild("Client"))
+local WRagdoll = require(ReplicatedStorage:WaitForChild("WRagdoll"))
 local FootstepsController = require(script.Parent.Parent:WaitForChild("FootstepsController"))
 
 local CutsceneController = {}
@@ -27,6 +29,8 @@ local PRELOADED_ATTRIBUTE = "CutscenePreloaded"
 local PLAYERS_FOLDER_NAME = "Teleport_Players"
 local STREAM_TIMEOUT = 8
 local GUI_NAME = "Cutscene"
+local FADE_GUI_NAME = "CutsceneFade"
+local FADE_DISPLAY_ORDER = 1000
 local SKIP_BUTTON_NAME = "Cutscene_Skip"
 local ARRIVAL_COMPLETE_ATTRIBUTE = "ArrivalComplete"
 local ARRIVAL_WAIT_MARGIN = 15
@@ -38,6 +42,10 @@ local SWAY_SPEED = 0.9
 local WALK_RNG = Random.new()
 local STEP_RAY_LIFT = 2
 local STEP_RAY_LENGTH = 12
+local ROOT_JOINT_NAME = "Root"
+local TORSO_PARTS = { HumanoidRootPart = true, LowerTorso = true, UpperTorso = true }
+local LIFT_ATTACHMENT_NAME = "CutsceneLift"
+local RAGDOLL_ATTRIBUTE = "Ragdolled"
 
 type CameraTarget = {
 	cframe: CFrame,
@@ -55,6 +63,13 @@ type Walker = {
 	lastPosition: Vector3,
 	distanceSinceStep: number,
 	stepStride: number,
+	dropped: boolean,
+}
+
+type CameraRig = {
+	position: Vector3,
+	focus: Vector3,
+	shot: Shot?,
 }
 
 type Scene = {
@@ -81,10 +96,13 @@ local released = false
 local finished = false
 local savedFov: number?
 local gui: ScreenGui?
+local fadeGui: ScreenGui?
+local fadeFrame: Frame?
 local currentCFrame: CFrame? = nil
 local currentFov: number? = nil
 local sequenceToken = 0
 local walkers: { Walker } = {}
+local cameraRig: CameraRig? = nil
 
 local function setCoreGuiEnabled(enabled: boolean)
 	pcall(function()
@@ -344,6 +362,7 @@ local function collectWalkers(): { Walker }
 			lastPosition = startPosition,
 			distanceSinceStep = 0,
 			stepStride = math.max(Config.Cutscene.StepStride, 0.5),
+			dropped = false,
 		})
 	end
 	return list
@@ -384,7 +403,7 @@ end
 
 local function moveWalkers(alpha: number)
 	for _, walker in walkers do
-		if walker.rig.Parent then
+		if walker.rig.Parent and not walker.dropped then
 			local position = walkerPosition(walker, alpha)
 			walker.rig:PivotTo(CFrame.lookAt(position, position + walker.endCFrame.LookVector))
 			stepWalker(walker, position)
@@ -397,6 +416,73 @@ local function stopWalkers(list: { Walker })
 		if walker.track then
 			walker.track:Stop(0.2)
 			walker.track = nil
+		end
+	end
+end
+
+local function droppedCenter(list: { Walker }, fallback: Vector3): Vector3
+	local sum = Vector3.zero
+	local count = 0
+	for _, walker in list do
+		local root = if walker.dropped then walker.rig:FindFirstChild("HumanoidRootPart") else nil
+		if root and root:IsA("BasePart") then
+			sum += root.Position
+			count += 1
+		end
+	end
+	return if count > 0 then sum / count else fallback
+end
+
+local function setFade(alpha: number)
+	if fadeFrame then
+		fadeFrame.BackgroundTransparency = 1 - math.clamp(alpha, 0, 1)
+	end
+end
+
+local function createFade(playerGui: PlayerGui)
+	if fadeGui then
+		return
+	end
+	local screen = Instance.new("ScreenGui")
+	screen.Name = FADE_GUI_NAME
+	screen.IgnoreGuiInset = true
+	screen.ResetOnSpawn = false
+	screen.DisplayOrder = FADE_DISPLAY_ORDER
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.fromScale(1, 1)
+	frame.BackgroundColor3 = Color3.new(0, 0, 0)
+	frame.BorderSizePixel = 0
+	frame.BackgroundTransparency = 1
+	frame.Parent = screen
+	screen.Parent = playerGui
+	fadeGui = screen
+	fadeFrame = frame
+end
+
+local function fadeOut()
+	local screen = fadeGui
+	local frame = fadeFrame
+	fadeGui = nil
+	fadeFrame = nil
+	if not screen or not frame then
+		return
+	end
+	if frame.BackgroundTransparency >= 1 then
+		screen:Destroy()
+		return
+	end
+	local info = TweenInfo.new(Config.Cutscene.Fall.FadeOutSeconds, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local tween = TweenService:Create(frame, info, { BackgroundTransparency = 1 })
+	tween.Completed:Once(function()
+		screen:Destroy()
+	end)
+	tween:Play()
+end
+
+local function clearDroppedWalkers(list: { Walker })
+	for _, walker in list do
+		if walker.dropped then
+			walker.rig:Destroy()
 		end
 	end
 end
@@ -425,10 +511,110 @@ local function sway(time: number, forward: Vector3, right: Vector3): Vector3
 		+ forward * (math.sin(time * SWAY_SPEED * 0.71 + 2.1) * amount * 0.4)
 end
 
-local function walkToHole(token: number, scene: Scene)
+local function frameShot(shot: Shot, shotAlpha: number, anchor: Vector3, focusOrigin: Vector3, forward: Vector3, right: Vector3, dt: number, time: number)
+	local rig = cameraRig
+	if not rig then
+		rig = { position = anchor, focus = focusOrigin, shot = nil }
+		cameraRig = rig
+	end
+	local cut = shot ~= rig.shot
+	rig.shot = shot
+	local offset = localOffset(shot.from, forward, right):Lerp(localOffset(shot.to, forward, right), smoothstep(shotAlpha))
+	local desired = anchor + offset + sway(time, forward, right)
+	local desiredFocus = focusOrigin + localOffset(shot.focus, forward, right)
+	if cut then
+		rig.position = desired
+		rig.focus = desiredFocus
+		currentFov = shot.fov
+	else
+		local blend = 1 - math.exp(-shot.smoothing * dt)
+		rig.position = rig.position:Lerp(desired, blend)
+		rig.focus = rig.focus:Lerp(desiredFocus, blend)
+		local fovBlend = 1 - math.exp(-FOV_SMOOTHING * dt)
+		local fov = currentFov or shot.fov
+		currentFov = fov + (shot.fov - fov) * fovBlend
+	end
+	currentCFrame = CFrame.lookAt(rig.position, rig.focus)
+end
+
+local function ragdollWalker(walker: Walker, forward: Vector3, right: Vector3)
+	walker.dropped = true
+	if walker.track then
+		walker.track:Stop(0)
+		walker.track = nil
+	end
+	local source = walker.rig
+	if not source.PrimaryPart or not source:FindFirstChild("UpperTorso") then
+		return
+	end
+	local rig = source:Clone()
+	for _, descendant in rig:GetDescendants() do
+		if descendant:IsA("LuaSourceContainer") then
+			descendant:Destroy()
+		end
+	end
+	rig.Parent = source.Parent
+	source.Parent = nil
+	walker.rig = rig
+	walker.rootPart = rig.PrimaryPart
+	local humanoid = rig:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.RequiresNeck = false
+		humanoid.BreakJointsOnDeath = false
+		humanoid.EvaluateStateMachine = false
+	end
+	for _, constraint in rig:GetDescendants() do
+		local isJoint = constraint:IsA("AnimationConstraint") and constraint.Name ~= ROOT_JOINT_NAME
+		if isJoint or constraint:IsA("BallSocketConstraint") then
+			constraint.Enabled = false
+		end
+	end
+	if humanoid then
+		local ok, err = pcall(WRagdoll.TurnRagdoll, WRagdoll, humanoid)
+		if not ok then
+			warn(("CutsceneController: ragdoll failed for %s: %s"):format(rig.Name, tostring(err)))
+			return
+		end
+	end
+	local fall = Config.Cutscene.Fall
+	local torsoGravityScale = math.clamp(fall.TorsoGravityScale, 0, 1)
+	local limbGravityScale = math.clamp(fall.LimbGravityScale, 0, 1)
+	local velocity = forward * fall.TossSpeed
+		+ Vector3.yAxis * fall.TossUp
+		+ right * WALK_RNG:NextNumber(-fall.Spread, fall.Spread)
+	local spin = -right * fall.TumbleSpeed + forward * (WALK_RNG:NextNumber(-0.3, 0.3) * fall.TumbleSpeed)
+	for _, part in rig:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.CanCollide = false
+			part.Anchored = false
+			local isTorso = TORSO_PARTS[part.Name] == true
+			if isTorso then
+				part.AssemblyLinearVelocity = velocity
+				part.AssemblyAngularVelocity = spin
+			else
+				part.AssemblyLinearVelocity = velocity * 0.5 + WALK_RNG:NextUnitVector() * fall.LimbScatter
+				part.AssemblyAngularVelocity = spin + WALK_RNG:NextUnitVector() * fall.LimbSpin
+			end
+			local scale = if isTorso then torsoGravityScale else limbGravityScale
+			if scale < 1 and part.Parent == rig then
+				local attachment = Instance.new("Attachment")
+				attachment.Name = LIFT_ATTACHMENT_NAME
+				attachment.Parent = part
+				local lift = Instance.new("VectorForce")
+				lift.Attachment0 = attachment
+				lift.RelativeTo = Enum.ActuatorRelativeTo.World
+				lift.ApplyAtCenterOfMass = true
+				lift.Force = Vector3.yAxis * (part:GetMass() * Workspace.Gravity * (1 - scale))
+				lift.Parent = part
+			end
+		end
+	end
+end
+
+local function walkToHole(token: number, scene: Scene): (Vector3?, Vector3?)
 	local settings = Config.Cutscene
 	if #walkers == 0 or not scene.hole then
-		return
+		return nil, nil
 	end
 	local hole = scene.hole :: CFrame
 	local startCenter = groupCenter(walkers, scene.players.Position)
@@ -460,9 +646,11 @@ local function walkToHole(token: number, scene: Scene)
 	end
 
 	local shots = settings.Shots :: { Shot }
-	local activeShot: Shot? = nil
-	local cameraPosition = if currentCFrame then currentCFrame.Position else scene.start.Position
-	local focusPosition = startCenter
+	cameraRig = {
+		position = if currentCFrame then currentCFrame.Position else scene.start.Position,
+		focus = startCenter,
+		shot = nil,
+	}
 	local tilt = math.rad(settings.PanDownTiltDegrees)
 	local craneFrom = (scene.start * CFrame.Angles(tilt, 0, 0)) + Vector3.new(0, settings.PanDownLift, 0)
 	local craneTo = scene.start * CFrame.new(0, 0, -settings.PanDownPushIn)
@@ -488,41 +676,116 @@ local function walkToHole(token: number, scene: Scene)
 		end
 
 		local shot, shotAlpha = shotAt(shots, progress)
-		local cut = shot ~= activeShot
-		activeShot = shot
-
 		local anchor = if shot.anchor == "hole" then Vector3.new(hole.Position.X, center.Y, hole.Position.Z) else center
-		local offset = localOffset(shot.from, forward, right):Lerp(localOffset(shot.to, forward, right), smoothstep(shotAlpha))
-		local desired = anchor + offset + sway(now - startTime, forward, right)
-		local desiredFocus = center + localOffset(shot.focus, forward, right)
-		if cut then
-			cameraPosition = desired
-			focusPosition = desiredFocus
-			currentFov = shot.fov
-		else
-			local blend = 1 - math.exp(-shot.smoothing * dt)
-			cameraPosition = cameraPosition:Lerp(desired, blend)
-			focusPosition = focusPosition:Lerp(desiredFocus, blend)
-			local fovBlend = 1 - math.exp(-FOV_SMOOTHING * dt)
-			currentFov = (currentFov or shot.fov) + (shot.fov - (currentFov or shot.fov)) * fovBlend
-		end
-		currentCFrame = CFrame.lookAt(cameraPosition, focusPosition)
+		frameShot(shot, shotAlpha, anchor, center, forward, right, dt, now - startTime)
 		if progress >= 1 then
 			break
 		end
 		RunService.RenderStepped:Wait()
 	end
+	return forward, right
+end
+
+local function diveIntoHole(token: number, holeGround: Vector3)
+	local fall = Config.Cutscene.Fall
+	local riseSeconds = math.max(fall.RiseSeconds, 0.1)
+	local plungeSeconds = math.max(fall.PlungeSeconds, 0.1)
+	local fadeDepth = math.max(fall.FadeDepth, 0.1)
+	local from = if currentCFrame then currentCFrame.Position else holeGround + Vector3.yAxis * 10
+	local apex = holeGround + Vector3.yAxis * fall.RiseHeight
+	local bottom = holeGround - Vector3.yAxis * fall.DiveDepth
+	local fallbackFocus = holeGround - Vector3.yAxis * 60
+	local startFocus = if cameraRig then cameraRig.focus else holeGround
+	local startTime = os.clock()
+	while not finished and sequenceToken == token do
+		local elapsed = os.clock() - startTime
+		local position: Vector3
+		local focus: Vector3
+		if elapsed < riseSeconds then
+			local alpha = smoothstep(elapsed / riseSeconds)
+			position = from:Lerp(apex, alpha)
+			focus = startFocus:Lerp(holeGround, alpha)
+		else
+			local alpha = math.clamp((elapsed - riseSeconds) / plungeSeconds, 0, 1)
+			position = apex:Lerp(bottom, alpha * alpha)
+			focus = holeGround:Lerp(droppedCenter(walkers, fallbackFocus), smoothstep(alpha))
+		end
+		if (focus - position).Magnitude < 1 then
+			focus = position - Vector3.yAxis
+		end
+		currentCFrame = CFrame.lookAt(position, focus)
+		setFade((holeGround.Y - position.Y) / fadeDepth)
+		if elapsed >= riseSeconds + plungeSeconds then
+			break
+		end
+		RunService.RenderStepped:Wait()
+	end
+	setFade(1)
+end
+
+local function fallIntoHole(token: number, scene: Scene, forward: Vector3, right: Vector3)
+	local settings = Config.Cutscene
+	local fall = settings.Fall
+	local hole = scene.hole :: CFrame
+	local groundY = walkers[1].endCFrame.Position.Y
+	local holeGround = Vector3.new(hole.Position.X, groundY, hole.Position.Z)
+	local speed = math.max(settings.WalkSpeed, 1)
+	local travels: { [Walker]: number } = {}
+	local duration = 0.1
+	for _, walker in walkers do
+		local travel = math.max((holeGround - walker.endCFrame.Position):Dot(forward) - fall.DropDistance, 0)
+		travels[walker] = travel
+		duration = math.max(duration, travel / speed)
+	end
+	local shots = fall.Shots :: { Shot }
+	local total = duration + fall.DiveDelay
+	local lastFrame = os.clock()
+	local startTime = os.clock()
+	while not finished and sequenceToken == token do
+		local now = os.clock()
+		local dt = now - lastFrame
+		lastFrame = now
+		local elapsed = now - startTime
+		local walked = elapsed * speed
+		for _, walker in walkers do
+			if walker.dropped or not walker.rig.Parent then
+				continue
+			end
+			local travel = travels[walker]
+			local position = walker.endCFrame.Position + forward * math.min(walked, travel)
+			walker.rig:PivotTo(CFrame.lookAt(position, position + forward))
+			stepWalker(walker, position)
+			if walked >= travel then
+				ragdollWalker(walker, forward, right)
+			end
+		end
+		local progress = math.clamp(elapsed / duration, 0, 1)
+		local shot, shotAlpha = shotAt(shots, progress)
+		frameShot(shot, shotAlpha, holeGround, holeGround, forward, right, dt, now - startTime)
+		if elapsed >= total then
+			break
+		end
+		RunService.RenderStepped:Wait()
+	end
 	stopWalkers(walkers)
+	if finished or sequenceToken ~= token then
+		return
+	end
+	diveIntoHole(token, holeGround)
 end
 
 local function runSequence(scene: Scene)
 	sequenceToken += 1
 	local token = sequenceToken
-	walkToHole(token, scene)
+	local forward, right = walkToHole(token, scene)
 	if finished or sequenceToken ~= token then
 		return
 	end
-	task.wait(Config.Cutscene.HoldSeconds)
+	if forward and right and scene.hole and #walkers > 0 then
+		fallIntoHole(token, scene, forward, right)
+	else
+		task.wait(Config.Cutscene.HoldSeconds)
+	end
 	if sequenceToken == token then
 		CutsceneController.finish()
 	end
@@ -545,6 +808,7 @@ local function resolveGui(playerGui: PlayerGui): ScreenGui?
 end
 
 local function showGui(playerGui: PlayerGui)
+	createFade(playerGui)
 	local screen = resolveGui(playerGui)
 	gui = screen
 	if not screen then
@@ -570,6 +834,45 @@ local function waitForArrival(player: Player)
 	end
 end
 
+local function landCharacter(character: Model)
+	local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 5)
+	if not humanoid or not humanoid:IsA("Humanoid") then
+		return
+	end
+	local settings = Config.Cutscene.Landing
+	local function apply()
+		local root = character:FindFirstChild("HumanoidRootPart")
+		if character:GetAttribute(RAGDOLL_ATTRIBUTE) then
+			humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+			if root and root:IsA("BasePart") then
+				root.AssemblyAngularVelocity = WALK_RNG:NextUnitVector() * settings.TumbleSpeed
+			end
+			return
+		end
+		humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+		if root and root:IsA("BasePart") then
+			local position = root.Position + Vector3.yAxis * settings.StandLift
+			local look = flatForward(root.CFrame)
+			root.CanCollide = true
+			root.AssemblyLinearVelocity = Vector3.zero
+			root.AssemblyAngularVelocity = Vector3.zero
+			character:PivotTo(CFrame.lookAt(position, position + look))
+		end
+		humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+	end
+	local connection
+	connection = character:GetAttributeChangedSignal(RAGDOLL_ATTRIBUTE):Connect(function()
+		apply()
+		if not character:GetAttribute(RAGDOLL_ATTRIBUTE) then
+			connection:Disconnect()
+		end
+	end)
+	table.insert(connections, connection)
+	if character:GetAttribute(RAGDOLL_ATTRIBUTE) then
+		apply()
+	end
+end
+
 function CutsceneController.isActive(): boolean
 	return isStarted and not released
 end
@@ -582,11 +885,13 @@ function CutsceneController.release()
 	finished = true
 	sequenceToken += 1
 	stopWalkers(walkers)
+	clearDroppedWalkers(walkers)
 	if gui then
 		gui.Enabled = false
 	end
 	unbindCamera()
 	setCoreGuiEnabled(true)
+	fadeOut()
 end
 
 function CutsceneController.finish()
@@ -603,12 +908,17 @@ function CutsceneController.finish()
 	task.spawn(function()
 		local player = Players.LocalPlayer
 		local deadline = os.clock() + Config.Cutscene.CharacterWaitSeconds
+		local landed: Model? = nil
 		while not released and os.clock() < deadline do
 			local character = player.Character
 			if character and character:FindFirstChild("HumanoidRootPart") and character.Parent then
+				landed = character
 				break
 			end
 			task.wait(0.1)
+		end
+		if landed then
+			landCharacter(landed)
 		end
 		CutsceneController.release()
 	end)

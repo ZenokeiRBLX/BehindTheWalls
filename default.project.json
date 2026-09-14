@@ -9,6 +9,9 @@
       "ReplicaShared": {
         "$path": "src/vendor/Replica/ReplicaShared"
       },
+      "WRagdoll": {
+        "$path": "src/vendor/WRagdoll"
+      },
       "Blink": {
         "$path": "src/shared/Blink"
       },
