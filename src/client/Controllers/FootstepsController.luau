@@ -133,9 +133,12 @@ local function pickVariant(material: Enum.Material): Sound?
 	return variants[math.random(1, #variants)]
 end
 
-local function playVariant(template: Sound, rootPart: BasePart, pitchMin: number, pitchJitter: number)
+local function playVariant(template: Sound, rootPart: BasePart, pitchMin: number, pitchJitter: number, volumeScale: number?)
 	local sound = template:Clone()
 	sound.PlaybackSpeed = pitchMin + math.random() * pitchJitter
+	if volumeScale then
+		sound.Volume *= volumeScale
+	end
 	if sound.RollOffMaxDistance >= 10000 then
 		sound.RollOffMinDistance = DEFAULT_ROLLOFF_MIN
 		sound.RollOffMaxDistance = DEFAULT_ROLLOFF_MAX
@@ -168,13 +171,13 @@ local function isWalking(humanoid: Humanoid, rootPart: BasePart): boolean
 	return Vector3.new(velocity.X, 0, velocity.Z).Magnitude >= MIN_MOVE_SPEED
 end
 
-function FootstepsController.playStepAt(rootPart: BasePart, material: Enum.Material)
+function FootstepsController.playStepAt(rootPart: BasePart, material: Enum.Material, volumeScale: number?)
 	if not isWithinRange(rootPart) then
 		return
 	end
 	local template = pickVariant(material)
 	if template then
-		playVariant(template, rootPart, STEP_PITCH_MIN, STEP_PITCH_JITTER)
+		playVariant(template, rootPart, STEP_PITCH_MIN, STEP_PITCH_JITTER, volumeScale)
 	end
 end
 

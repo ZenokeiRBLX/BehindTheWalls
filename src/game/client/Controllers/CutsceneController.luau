@@ -1,8 +1,10 @@
 local ContentProvider = game:GetService("ContentProvider")
+local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedFirst = game:GetService("ReplicatedFirst")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
@@ -42,6 +44,9 @@ local SWAY_SPEED = 0.9
 local WALK_RNG = Random.new()
 local STEP_RAY_LIFT = 2
 local STEP_RAY_LENGTH = 12
+local FALL_ROLLOFF_MIN = 10
+local FALL_ROLLOFF_MAX = 250
+local FALL_SOUND_LIFETIME = 8
 local ROOT_JOINT_NAME = "Root"
 local TORSO_PARTS = { HumanoidRootPart = true, LowerTorso = true, UpperTorso = true }
 local LIFT_ATTACHMENT_NAME = "CutsceneLift"
@@ -64,6 +69,12 @@ type Walker = {
 	distanceSinceStep: number,
 	stepStride: number,
 	dropped: boolean,
+}
+
+type MusicTrack = {
+	sound: Sound,
+	volume: number,
+	tween: Tween?,
 }
 
 type CameraRig = {
@@ -98,6 +109,7 @@ local savedFov: number?
 local gui: ScreenGui?
 local fadeGui: ScreenGui?
 local fadeFrame: Frame?
+local musicTracks: { [string]: MusicTrack } = {}
 local currentCFrame: CFrame? = nil
 local currentFov: number? = nil
 local sequenceToken = 0
@@ -397,7 +409,7 @@ local function stepWalker(walker: Walker, position: Vector3)
 	end
 	walker.distanceSinceStep -= walker.stepStride
 	if walker.rootPart then
-		FootstepsController.playStepAt(walker.rootPart, floorMaterialAt(position))
+		FootstepsController.playStepAt(walker.rootPart, floorMaterialAt(position), Config.Cutscene.Audio.FootstepVolumeScale)
 	end
 end
 
@@ -477,6 +489,102 @@ local function fadeOut()
 		screen:Destroy()
 	end)
 	tween:Play()
+end
+
+local function findSound(name: string): Sound?
+	local sound = SoundService:FindFirstChild(name)
+	return if sound and sound:IsA("Sound") then sound else nil
+end
+
+local function playMusic(name: string, fadeInSeconds: number)
+	local sound = findSound(name)
+	if not sound then
+		warn("CutsceneController: SoundService." .. name .. " not found")
+		return
+	end
+	local existing = musicTracks[name]
+	local volume = if existing then existing.volume else sound.Volume
+	if existing and existing.tween then
+		existing.tween:Cancel()
+	end
+	sound.TimePosition = 0
+	sound.Volume = 0
+	sound:Play()
+	local tween = TweenService:Create(sound, TweenInfo.new(math.max(fadeInSeconds, 0.05)), { Volume = volume })
+	musicTracks[name] = { sound = sound, volume = volume, tween = tween }
+	tween:Play()
+end
+
+local function stopMusic(name: string, seconds: number)
+	local track = musicTracks[name]
+	if not track then
+		return
+	end
+	musicTracks[name] = nil
+	if track.tween then
+		track.tween:Cancel()
+	end
+	local sound = track.sound
+	local restoreVolume = track.volume
+	local tween = TweenService:Create(sound, TweenInfo.new(math.max(seconds, 0.05)), { Volume = 0 })
+	tween.Completed:Once(function()
+		sound:Stop()
+		sound.Volume = restoreVolume
+	end)
+	tween:Play()
+end
+
+local function stopAllMusic(seconds: number)
+	local names = {}
+	for name in musicTracks do
+		table.insert(names, name)
+	end
+	for _, name in names do
+		stopMusic(name, seconds)
+	end
+end
+
+local function playSound(name: string)
+	local sound = findSound(name)
+	if not sound then
+		warn("CutsceneController: SoundService." .. name .. " not found")
+		return
+	end
+	sound.TimePosition = 0
+	sound:Play()
+end
+
+local function playSoundAt(name: string, part: BasePart, volumeScale: number, speedRange: { number }?)
+	local template = findSound(name)
+	if not template then
+		warn("CutsceneController: SoundService." .. name .. " not found")
+		return
+	end
+	local sound = template:Clone()
+	sound.Volume = template.Volume * volumeScale
+	if speedRange then
+		sound.PlaybackSpeed = WALK_RNG:NextNumber(speedRange[1], speedRange[2])
+	end
+	if sound.RollOffMaxDistance >= 10000 then
+		sound.RollOffMinDistance = FALL_ROLLOFF_MIN
+		sound.RollOffMaxDistance = FALL_ROLLOFF_MAX
+	end
+	sound.Parent = part
+	sound:Play()
+	sound.Ended:Once(function()
+		sound:Destroy()
+	end)
+	Debris:AddItem(sound, FALL_SOUND_LIFETIME)
+end
+
+local function playFallSounds(rootPart: BasePart)
+	local audio = Config.Cutscene.Audio
+	playSoundAt(audio.BoneCrackName, rootPart, audio.BoneCrackVolumeScale, audio.BoneCrackSpeedRange)
+	local screams = audio.ScreamNames
+	if #screams > 0 then
+		local pick = screams[WALK_RNG:NextInteger(1, #screams)]
+		playSoundAt(pick, rootPart, audio.ScreamVolumeScale, audio.ScreamSpeedRange)
+	end
 end
 
 local function clearDroppedWalkers(list: { Walker })
@@ -609,6 +717,10 @@ local function ragdollWalker(walker: Walker, forward: Vector3, right: Vector3)
 			end
 		end
 	end
+	local rootPart = rig.PrimaryPart
+	if rootPart then
+		playFallSounds(rootPart)
+	end
 end
 
 local function walkToHole(token: number, scene: Scene): (Vector3?, Vector3?)
@@ -688,6 +800,7 @@ end
 
 local function diveIntoHole(token: number, holeGround: Vector3)
 	local fall = Config.Cutscene.Fall
+	stopAllMusic(Config.Cutscene.Audio.MusicFadeOutSeconds)
 	local riseSeconds = math.max(fall.RiseSeconds, 0.1)
 	local plungeSeconds = math.max(fall.PlungeSeconds, 0.1)
 	local fadeDepth = math.max(fall.FadeDepth, 0.1)
@@ -696,6 +809,7 @@ local function diveIntoHole(token: number, holeGround: Vector3)
 	local bottom = holeGround - Vector3.yAxis * fall.DiveDepth
 	local fallbackFocus = holeGround - Vector3.yAxis * 60
 	local startFocus = if cameraRig then cameraRig.focus else holeGround
+	local boomPlayed = false
 	local startTime = os.clock()
 	while not finished and sequenceToken == token do
 		local elapsed = os.clock() - startTime
@@ -714,6 +828,10 @@ local function diveIntoHole(token: number, holeGround: Vector3)
 			focus = position - Vector3.yAxis
 		end
 		currentCFrame = CFrame.lookAt(position, focus)
+		if not boomPlayed and elapsed >= riseSeconds and position.Y <= holeGround.Y + Config.Cutscene.Audio.BoomLeadStuds then
+			boomPlayed = true
+			playSound(Config.Cutscene.Audio.BoomName)
+		end
 		setFade((holeGround.Y - position.Y) / fadeDepth)
 		if elapsed >= riseSeconds + plungeSeconds then
 			break
@@ -725,6 +843,7 @@ end
 
 local function fallIntoHole(token: number, scene: Scene, forward: Vector3, right: Vector3)
 	local settings = Config.Cutscene
+	stopMusic(settings.Audio.CutsceneMusicName, settings.Audio.CutsceneMusicFadeOutSeconds)
 	local fall = settings.Fall
 	local hole = scene.hole :: CFrame
 	local groundY = walkers[1].endCFrame.Position.Y
@@ -840,6 +959,7 @@ local function landCharacter(character: Model)
 		return
 	end
 	local settings = Config.Cutscene.Landing
+	playSound(Config.Cutscene.Audio.SewerSoundName)
 	local function apply()
 		local root = character:FindFirstChild("HumanoidRootPart")
 		if character:GetAttribute(RAGDOLL_ATTRIBUTE) then
@@ -892,6 +1012,7 @@ function CutsceneController.release()
 	unbindCamera()
 	setCoreGuiEnabled(true)
 	fadeOut()
+	stopAllMusic(Config.Cutscene.Audio.MusicFadeOutSeconds)
 end
 
 function CutsceneController.finish()
@@ -968,6 +1089,8 @@ function CutsceneController.start()
 		end
 		walkers = collectWalkers()
 		showGui(playerGui)
+		playMusic(Config.Cutscene.Audio.MusicName, Config.Cutscene.Audio.MusicFadeInSeconds)
+		playMusic(Config.Cutscene.Audio.CutsceneMusicName, Config.Cutscene.Audio.MusicFadeInSeconds)
 		runSequence(scene)
 	end)
 end
