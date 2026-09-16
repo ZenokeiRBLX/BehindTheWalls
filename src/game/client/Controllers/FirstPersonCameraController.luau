@@ -6,15 +6,14 @@ local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Modules"):WaitForChild("Config"))
 
-local ThirdPersonCameraController = {}
+local FirstPersonCameraController = {}
 
-local CAMERA_BIND = "ThirdPersonCamera"
+local CAMERA_BIND = "FirstPersonCamera"
 local RAGDOLL_ATTRIBUTE = "Ragdolled"
 local MAX_DELTA_TIME = 0.1
 local SPRING_STEP = 1 / 120
 local THUMBSTICK_DEADZONE = 0.15
-local FILTER_REFRESH_SECONDS = 0.5
-local MIN_CAST_LENGTH = 0.001
+local EPSILON = 0.001
 local NOISE_SEED_PITCH = 17.3
 local NOISE_SEED_YAW = 41.9
 local NOISE_SEED_ROLL = 73.1
@@ -30,23 +29,20 @@ local UserGameSettings = UserSettings():GetService("UserGameSettings")
 local isStarted = false
 local enabled = false
 local connections: { RBXScriptConnection } = {}
+local characterConnections: { RBXScriptConnection } = {}
+local hiddenParts: { BasePart } = {}
+local visibleParts: { BasePart } = {}
 local castParams = RaycastParams.new()
 castParams.FilterType = Enum.RaycastFilterType.Exclude
 castParams.RespectCanCollide = true
-local filterRefreshAt = 0
 
 local yaw = 0
 local pitch = 0
 local lookDelta = Vector2.zero
 local stick = Vector2.zero
 local touchInput: InputObject? = nil
-local aiming = false
-local aimBlend = 0
-local shoulderSide = 1
-local shoulderBlend = 1
-local zoomTarget = Config.Camera.Distance
-local distance = Config.Camera.Distance
-local focus: Vector3? = nil
+local eyeHeight: number? = nil
+local eyeY: number? = nil
 local fieldOfView = Config.Camera.FieldOfView
 local elapsed = 0
 local bobPhase = 0
@@ -85,32 +81,63 @@ local function isSuspended(): boolean
 	return false
 end
 
-local function refreshFilter()
-	local now = os.clock()
-	if now < filterRefreshAt then
-		return
+local function isHeadPart(part: BasePart): boolean
+	if part.Name == "Head" then
+		return true
 	end
-	filterRefreshAt = now + FILTER_REFRESH_SECONDS
-	local excluded = {}
-	for _, player in Players:GetPlayers() do
-		if player.Character then
-			table.insert(excluded, player.Character)
-		end
-	end
-	castParams.FilterDescendantsInstances = excluded
+	return part:FindFirstAncestorOfClass("Accessory") ~= nil
 end
 
-local function castLength(origin: Vector3, direction: Vector3): number
-	local length = direction.Magnitude
-	if length < MIN_CAST_LENGTH then
-		return length
+local function trackPart(descendant: Instance)
+	if not descendant:IsA("BasePart") or descendant.Name == "HumanoidRootPart" then
+		return
 	end
-	local settings = Config.Camera
-	local result = Workspace:Spherecast(origin, settings.CollisionRadius, direction, castParams)
-	if result then
-		return math.max(result.Distance - settings.CollisionPadding, 0)
+	if isHeadPart(descendant) or not Config.Camera.ShowBody then
+		table.insert(hiddenParts, descendant)
+	else
+		table.insert(visibleParts, descendant)
 	end
-	return length
+end
+
+local function watchCharacter(character: Model?)
+	for _, connection in characterConnections do
+		connection:Disconnect()
+	end
+	table.clear(characterConnections)
+	table.clear(hiddenParts)
+	table.clear(visibleParts)
+	castParams.FilterDescendantsInstances = if character then { character } else {}
+	if not character then
+		return
+	end
+	for _, descendant in character:GetDescendants() do
+		trackPart(descendant)
+	end
+	table.insert(characterConnections, character.DescendantAdded:Connect(function(descendant)
+		task.defer(trackPart, descendant)
+	end))
+	table.insert(characterConnections, character.DescendantRemoving:Connect(function(descendant)
+		if not descendant:IsA("BasePart") then
+			return
+		end
+		local hiddenIndex = table.find(hiddenParts, descendant)
+		if hiddenIndex then
+			table.remove(hiddenParts, hiddenIndex)
+		end
+		local visibleIndex = table.find(visibleParts, descendant)
+		if visibleIndex then
+			table.remove(visibleParts, visibleIndex)
+		end
+	end))
+end
+
+local function setBodyVisibility(hidden: boolean)
+	for _, part in hiddenParts do
+		part.LocalTransparencyModifier = if hidden then 1 else 0
+	end
+	for _, part in visibleParts do
+		part.LocalTransparencyModifier = 0
+	end
 end
 
 local function setAutoRotate(humanoid: Humanoid?, faceCamera: boolean)
@@ -144,11 +171,10 @@ end
 
 local function readLook(dt: number)
 	local settings = Config.Camera
-	local sensitivity = UserGameSettings.MouseSensitivity
 	if UserInputService.MouseEnabled then
 		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 		UserInputService.MouseIconEnabled = false
-		lookDelta += UserInputService:GetMouseDelta() * settings.MouseSensitivity * sensitivity
+		lookDelta += UserInputService:GetMouseDelta() * settings.MouseSensitivity * UserGameSettings.MouseSensitivity
 	end
 	local magnitude = stick.Magnitude
 	if magnitude > THUMBSTICK_DEADZONE then
@@ -159,26 +185,32 @@ local function readLook(dt: number)
 	yaw = (yaw + deltaYaw) % TWO_PI
 	pitch = math.clamp(pitch - math.rad(lookDelta.Y), math.rad(settings.PitchMin), math.rad(settings.PitchMax))
 	lookDelta = Vector2.zero
-	local turnRate = deltaYaw / math.max(dt, MIN_CAST_LENGTH)
+	local turnRate = deltaYaw / math.max(dt, EPSILON)
 	local turnLimit = math.rad(settings.TurnRoll.MaxDegrees)
 	local turnTarget = math.clamp(turnRate * math.rad(settings.TurnRoll.DegreesPerRadian), -turnLimit, turnLimit)
 	turnRoll = damp(turnRoll, turnTarget, settings.TurnRoll.Smoothing, dt)
 end
 
-local function faceCharacter(character: Model, humanoid: Humanoid?, root: BasePart, dt: number)
+local function eyePosition(character: Model, root: BasePart, ragdolled: boolean, dt: number): Vector3
 	local settings = Config.Camera
-	local ragdolled = character:GetAttribute(RAGDOLL_ATTRIBUTE) == true
-	local alive = humanoid ~= nil and humanoid.Health > 0 and not humanoid.Sit
-	local moving = humanoid ~= nil and humanoid.MoveDirection.Magnitude > 0
-	local faceCamera = alive and not ragdolled and (aiming or (settings.FaceCameraWhenMoving and moving))
-	setAutoRotate(humanoid, faceCamera)
-	if not faceCamera then
-		return
+	local head = character:FindFirstChild("Head")
+	if ragdolled or not head or not head:IsA("BasePart") then
+		local fallback = if head and head:IsA("BasePart") then head.Position else root.Position
+		eyeY = fallback.Y
+		return fallback
 	end
-	local currentYaw = yawOf(root.CFrame.LookVector)
-	local difference = (yaw - currentYaw + math.pi) % TWO_PI - math.pi
-	local nextYaw = currentYaw + difference * (1 - math.exp(-settings.CharacterTurnSpeed * dt))
-	root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, nextYaw, 0)
+	local measured = root.CFrame:PointToObjectSpace(head.Position).Y + settings.EyeLift
+	eyeHeight = if eyeHeight then damp(eyeHeight, measured, settings.EyeHeightSmoothing, dt) else measured
+	local flatForward = CFrame.Angles(0, yaw, 0).LookVector
+	local target = root.Position + Vector3.yAxis * (eyeHeight :: number)
+	eyeY = if eyeY then damp(eyeY, target.Y, settings.VerticalSmoothing, dt) else target.Y
+	local anchor = Vector3.new(target.X, eyeY :: number, target.Z)
+	local offset = flatForward * settings.EyeForward
+	local hit = Workspace:Raycast(anchor, offset + flatForward * settings.WallPadding, castParams)
+	if hit then
+		offset = flatForward * math.max(hit.Distance - settings.WallPadding, 0)
+	end
+	return anchor + offset
 end
 
 local function update(dt: number)
@@ -192,6 +224,7 @@ local function update(dt: number)
 		UserInputService.MouseIconEnabled = true
 		lookDelta = Vector2.zero
 		restoreAutoRotate()
+		setBodyVisibility(false)
 		return
 	end
 	dt = math.clamp(dt, 0, MAX_DELTA_TIME)
@@ -203,13 +236,14 @@ local function update(dt: number)
 	if not character or not root then
 		return
 	end
-	refreshFilter()
 
 	local velocity = root.AssemblyLinearVelocity
 	local planarSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
 	local walkSpeed = if humanoid then math.max(humanoid.WalkSpeed, 1) else 16
 	local grounded = humanoid ~= nil and humanoid.FloorMaterial ~= Enum.Material.Air
 	local ragdolled = character:GetAttribute(RAGDOLL_ATTRIBUTE) == true
+	local alive = humanoid ~= nil and humanoid.Health > 0
+
 	if grounded then
 		if airSpeed < 0 and not ragdolled then
 			local impactSettings = settings.Impact
@@ -222,51 +256,18 @@ local function update(dt: number)
 	end
 	stepSpring(impact, settings.Impact.Stiffness, settings.Impact.Damping, dt)
 
-	aimBlend = damp(aimBlend, if aiming then 1 else 0, settings.AimSmoothing, dt)
-	shoulderBlend = damp(shoulderBlend, shoulderSide, settings.ShoulderSmoothing, dt)
-
-	local target = root.Position + Vector3.yAxis * settings.FocusHeight
-	if not focus then
-		focus = target
-	end
-	local current = focus :: Vector3
-	local followAlpha = 1 - math.exp(-settings.FollowSmoothing * dt)
-	focus = Vector3.new(
-		current.X + (target.X - current.X) * followAlpha,
-		damp(current.Y, target.Y, settings.VerticalSmoothing, dt),
-		current.Z + (target.Z - current.Z) * followAlpha
-	)
-	local base = (focus :: Vector3) + Vector3.yAxis * impact.position
-
-	local yawRotation = CFrame.Angles(0, yaw, 0)
-	local rotation = yawRotation * CFrame.Angles(pitch, 0, 0)
-	local shoulderX = shoulderBlend * (settings.ShoulderOffset + (settings.AimShoulderOffset - settings.ShoulderOffset) * aimBlend)
-	local shoulderVector = rotation:VectorToWorldSpace(Vector3.new(shoulderX, settings.ShoulderHeight, 0))
-	local shoulderLength = castLength(base, shoulderVector)
-	local shoulderPoint = if shoulderVector.Magnitude > MIN_CAST_LENGTH
-		then base + shoulderVector.Unit * shoulderLength
-		else base
-
-	local goalDistance = zoomTarget + (settings.AimDistance - zoomTarget) * aimBlend
-	local backward = -rotation.LookVector
-	local allowed = castLength(shoulderPoint, backward * goalDistance)
-	if allowed < distance then
-		distance = allowed
-	else
-		distance = damp(distance, allowed, settings.ZoomSmoothing, dt)
-	end
-	local position = shoulderPoint + backward * distance
-
 	local moveRatio = if grounded and not ragdolled then math.clamp(planarSpeed / walkSpeed, 0, 1.5) else 0
 	bobWeight = damp(bobWeight, moveRatio, settings.Bob.Smoothing, dt)
 	bobPhase = (bobPhase + planarSpeed * dt * math.pi / math.max(settings.Bob.StrideStuds, 0.1)) % (TWO_PI * 2)
 	local bobOffset = Vector3.new(
 		math.cos(bobPhase) * settings.Bob.Sway * bobWeight,
-		math.sin(bobPhase * 2) * settings.Bob.Height * bobWeight,
+		(math.sin(bobPhase * 2) * settings.Bob.Height * bobWeight) + impact.position,
 		0
 	)
+	local bobPitch = math.sin(bobPhase * 2) * math.rad(settings.Bob.PitchDegrees) * bobWeight
 	local bobRoll = math.cos(bobPhase) * math.rad(settings.Bob.RollDegrees) * bobWeight
 
+	local yawRotation = CFrame.Angles(0, yaw, 0)
 	local localVelocity = yawRotation:VectorToObjectSpace(velocity)
 	local strafeTarget = math.clamp(-localVelocity.X / walkSpeed, -1, 1) * math.rad(settings.StrafeTiltDegrees)
 	strafeRoll = damp(strafeRoll, if ragdolled then 0 else strafeTarget, settings.TiltSmoothing, dt)
@@ -279,47 +280,43 @@ local function update(dt: number)
 	local breathRoll = math.noise(noiseTime, NOISE_SEED_ROLL) * breathAmount * 0.5
 	local impactPitch = math.rad(impact.position * settings.Impact.PitchDegreesPerStud)
 
-	camera.CFrame = CFrame.new(position)
+	local eye = eyePosition(character, root, ragdolled, dt)
+	local rotation = yawRotation * CFrame.Angles(pitch, 0, 0)
+	camera.CFrame = CFrame.new(eye)
 		* rotation
 		* CFrame.new(bobOffset)
-		* CFrame.Angles(breathPitch + impactPitch, breathYaw, bobRoll + strafeRoll + turnRoll + breathRoll)
-	camera.Focus = CFrame.new(base)
+		* CFrame.Angles(breathPitch + impactPitch + bobPitch, breathYaw, bobRoll + strafeRoll + turnRoll + breathRoll)
+	camera.Focus = CFrame.new(eye)
 
 	local speedBoost = math.clamp((planarSpeed - walkSpeed) / walkSpeed, 0, 1) * settings.SpeedFovBoost
-	local goalFov = settings.FieldOfView + (settings.AimFieldOfView - settings.FieldOfView) * aimBlend + speedBoost
-	fieldOfView = damp(fieldOfView, goalFov, settings.FovSmoothing, dt)
+	fieldOfView = damp(fieldOfView, settings.FieldOfView + speedBoost, settings.FovSmoothing, dt)
 	camera.FieldOfView = fieldOfView
 
-	faceCharacter(character, humanoid, root, dt)
-end
+	setBodyVisibility(not ragdolled)
 
-local function isAimInput(input: InputObject): boolean
-	return input.UserInputType == Enum.UserInputType.MouseButton2 or input.KeyCode == Enum.KeyCode.ButtonL2
+	local faceCamera = alive and not ragdolled and not (humanoid :: Humanoid).Sit
+	setAutoRotate(humanoid, faceCamera)
+	if faceCamera then
+		root.CFrame = CFrame.new(root.Position) * yawRotation
+	end
 end
 
 local function onInputBegan(input: InputObject, processed: boolean)
 	if not enabled or processed then
 		return
 	end
-	if isAimInput(input) then
-		aiming = true
-	elseif table.find(Config.Camera.ShoulderSwapKeys, input.KeyCode) then
-		shoulderSide = -shoulderSide
-	elseif input.UserInputType == Enum.UserInputType.Touch and touchInput == nil then
+	if input.UserInputType == Enum.UserInputType.Touch and touchInput == nil then
 		touchInput = input
 	end
 end
 
 local function onInputEnded(input: InputObject)
-	if isAimInput(input) then
-		aiming = false
-	end
 	if input == touchInput then
 		touchInput = nil
 	end
 end
 
-local function onInputChanged(input: InputObject, processed: boolean)
+local function onInputChanged(input: InputObject)
 	if not enabled then
 		return
 	end
@@ -327,24 +324,20 @@ local function onInputChanged(input: InputObject, processed: boolean)
 		lookDelta += Vector2.new(input.Delta.X, input.Delta.Y) * Config.Camera.TouchSensitivity
 	elseif input.KeyCode == Enum.KeyCode.Thumbstick2 then
 		stick = Vector2.new(input.Position.X, input.Position.Y)
-	elseif input.UserInputType == Enum.UserInputType.MouseWheel and not processed then
-		local settings = Config.Camera
-		zoomTarget = math.clamp(zoomTarget - input.Position.Z * settings.ZoomStep, settings.MinDistance, settings.MaxDistance)
 	end
 end
 
-function ThirdPersonCameraController.snap()
-	local settings = Config.Camera
+function FirstPersonCameraController.snap()
 	local _, _, root = getCharacterParts()
 	if root then
 		local look = root.CFrame.LookVector
-		if Vector3.new(look.X, 0, look.Z).Magnitude > MIN_CAST_LENGTH then
+		if Vector3.new(look.X, 0, look.Z).Magnitude > EPSILON then
 			yaw = yawOf(look)
 		end
 	end
-	pitch = math.rad(settings.DefaultPitch)
-	focus = nil
-	distance = zoomTarget
+	pitch = math.rad(Config.Camera.DefaultPitch)
+	eyeHeight = nil
+	eyeY = nil
 	lookDelta = Vector2.zero
 	turnRoll = 0
 	strafeRoll = 0
@@ -352,36 +345,37 @@ function ThirdPersonCameraController.snap()
 	airSpeed = 0
 	impact.position = 0
 	impact.velocity = 0
-	filterRefreshAt = 0
 end
 
-function ThirdPersonCameraController.isEnabled(): boolean
+function FirstPersonCameraController.isEnabled(): boolean
 	return enabled
 end
 
-function ThirdPersonCameraController.enable()
+function FirstPersonCameraController.enable()
 	if enabled then
 		return
 	end
 	enabled = true
-	ThirdPersonCameraController.snap()
+	watchCharacter(Players.LocalPlayer.Character)
+	FirstPersonCameraController.snap()
 	local camera = Workspace.CurrentCamera
 	fieldOfView = if camera then camera.FieldOfView else Config.Camera.FieldOfView
 	RunService:BindToRenderStep(CAMERA_BIND, Enum.RenderPriority.Camera.Value + 1, update)
 end
 
-function ThirdPersonCameraController.disable()
+function FirstPersonCameraController.disable()
 	if not enabled then
 		return
 	end
 	enabled = false
-	aiming = false
 	touchInput = nil
 	stick = Vector2.zero
 	pcall(function()
 		RunService:UnbindFromRenderStep(CAMERA_BIND)
 	end)
 	restoreAutoRotate()
+	setBodyVisibility(false)
+	watchCharacter(nil)
 	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 	UserInputService.MouseIconEnabled = true
 	local camera = Workspace.CurrentCamera
@@ -390,7 +384,7 @@ function ThirdPersonCameraController.disable()
 	end
 end
 
-function ThirdPersonCameraController.start()
+function FirstPersonCameraController.start()
 	if isStarted then
 		return
 	end
@@ -402,12 +396,13 @@ function ThirdPersonCameraController.start()
 		autoRotateOverridden = false
 		character:WaitForChild("HumanoidRootPart", 10)
 		if enabled and Players.LocalPlayer.Character == character then
-			ThirdPersonCameraController.snap()
+			watchCharacter(character)
+			FirstPersonCameraController.snap()
 		end
 	end))
 end
 
-function ThirdPersonCameraController.stop()
+function FirstPersonCameraController.stop()
 	if not isStarted then
 		return
 	end
@@ -416,7 +411,7 @@ function ThirdPersonCameraController.stop()
 		connection:Disconnect()
 	end
 	table.clear(connections)
-	ThirdPersonCameraController.disable()
+	FirstPersonCameraController.disable()
 end
 
-return ThirdPersonCameraController
+return FirstPersonCameraController
