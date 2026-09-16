@@ -14,6 +14,7 @@ local Config = require(Shared:WaitForChild("Modules"):WaitForChild("Config"))
 local Blink = require(ReplicatedStorage:WaitForChild("Blink"):WaitForChild("Client"))
 local WRagdoll = require(ReplicatedStorage:WaitForChild("WRagdoll"))
 local FootstepsController = require(script.Parent.Parent:WaitForChild("FootstepsController"))
+local ThirdPersonCameraController = require(script.Parent:WaitForChild("ThirdPersonCameraController"))
 
 local CutsceneController = {}
 
@@ -21,6 +22,10 @@ local CAMERA_PART_NAME = "Cutscene_Camera"
 local CAMERA_PART_TIMEOUT = 30
 local CAMERA_PART_POLL = 0.25
 local CAMERA_BIND = "CutsceneCamera"
+local LANDING_BIND = "CutsceneLandingCamera"
+local LANDING_PROBE_DIRECTIONS = 8
+local LANDING_POLL = 0.05
+local WAKE_BLUR_NAME = "CutsceneWakeBlur"
 local FOV_ATTRIBUTE = "FieldOfView"
 local CAMERA_CFRAME_ATTRIBUTE = "CutsceneCameraCFrame"
 local CAMERA_FOV_ATTRIBUTE = "CutsceneCameraFov"
@@ -1027,6 +1032,102 @@ local function playSplashOnImpact(character: Model)
 	end
 end
 
+local function tweenFade(transparency: number, seconds: number)
+	local frame = fadeFrame
+	if not frame then
+		return
+	end
+	if seconds <= 0 then
+		frame.BackgroundTransparency = transparency
+		return
+	end
+	local info = TweenInfo.new(seconds, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+	local tween = TweenService:Create(frame, info, { BackgroundTransparency = transparency })
+	tween:Play()
+	tween.Completed:Wait()
+end
+
+local function landingCameraPosition(character: Model, root: BasePart): Vector3
+	local settings = Config.Cutscene.Landing
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { character }
+	params.RespectCanCollide = true
+	local floor = Workspace:Raycast(root.Position, -Vector3.yAxis * (settings.DropHeight * 2), params)
+	local ground = if floor then floor.Position else root.Position - Vector3.yAxis * settings.DropHeight
+	local origin = ground + Vector3.yAxis * settings.CameraHeight
+	local best = origin
+	local bestLength = -1
+	for index = 0, LANDING_PROBE_DIRECTIONS - 1 do
+		local angle = index / LANDING_PROBE_DIRECTIONS * math.pi * 2
+		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
+		local hit = Workspace:Raycast(origin, direction * settings.CameraDistance, params)
+		local length = if hit then math.max(hit.Distance - settings.CameraWallPadding, 0) else settings.CameraDistance
+		if length > bestLength then
+			bestLength = length
+			best = origin + direction * length
+		end
+	end
+	return best
+end
+
+local function startLandingCamera(character: Model, root: BasePart)
+	if not cameraBound then
+		return
+	end
+	local settings = Config.Cutscene.Landing
+	local position = landingCameraPosition(character, root)
+	local look = root.Position
+	currentFov = settings.CameraFieldOfView
+	RunService:BindToRenderStep(LANDING_BIND, Enum.RenderPriority.Camera.Value, function(dt)
+		if not root.Parent then
+			return
+		end
+		look = look:Lerp(root.Position, 1 - math.exp(-settings.CameraSmoothing * dt))
+		if (look - position).Magnitude > PIVOT_EPSILON then
+			currentCFrame = CFrame.lookAt(position, look)
+		end
+	end)
+end
+
+local function stopLandingCamera()
+	pcall(function()
+		RunService:UnbindFromRenderStep(LANDING_BIND)
+	end)
+end
+
+local function wakeBlur()
+	local camera = Workspace.CurrentCamera
+	local settings = Config.Cutscene.Landing
+	if not camera or settings.WakeBlur <= 0 then
+		return
+	end
+	local blur = Instance.new("BlurEffect")
+	blur.Name = WAKE_BLUR_NAME
+	blur.Size = settings.WakeBlur
+	blur.Parent = camera
+	local info = TweenInfo.new(math.max(settings.WakeBlurSeconds, 0.05), Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+	local tween = TweenService:Create(blur, info, { Size = 0 })
+	tween.Completed:Once(function()
+		blur:Destroy()
+	end)
+	tween:Play()
+end
+
+local function waitForAttribute(character: Model, predicate: (any) -> boolean, seconds: number): boolean
+	local deadline = os.clock() + seconds
+	while not released and character.Parent do
+		if predicate(character:GetAttribute(RAGDOLL_ATTRIBUTE)) then
+			return true
+		end
+		if os.clock() >= deadline then
+			return false
+		end
+		task.wait(LANDING_POLL)
+	end
+	return false
+end
+
 local function landCharacter(character: Model)
 	local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 5)
 	if not humanoid or not humanoid:IsA("Humanoid") then
@@ -1054,6 +1155,9 @@ local function landCharacter(character: Model)
 			character:PivotTo(CFrame.lookAt(position, position + look))
 		end
 		humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+		if ThirdPersonCameraController.isEnabled() then
+			ThirdPersonCameraController.snap()
+		end
 	end
 	local connection
 	connection = character:GetAttributeChangedSignal(RAGDOLL_ATTRIBUTE):Connect(function()
@@ -1066,6 +1170,41 @@ local function landCharacter(character: Model)
 	if character:GetAttribute(RAGDOLL_ATTRIBUTE) then
 		apply()
 	end
+
+	local hasRagdoll = waitForAttribute(character, function(value)
+		return value ~= nil
+	end, settings.AttributeWaitSeconds)
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if released or not hasRagdoll or character:GetAttribute(RAGDOLL_ATTRIBUTE) ~= true or not root or not root:IsA("BasePart") then
+		return
+	end
+
+	startLandingCamera(character, root)
+	tweenFade(1, settings.RevealSeconds)
+	task.wait(settings.BlackoutDelay)
+	if released then
+		stopLandingCamera()
+		return
+	end
+	local playerGui = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	if playerGui then
+		createFade(playerGui)
+	end
+	tweenFade(0, settings.BlackoutSeconds)
+	stopLandingCamera()
+	unbindCamera()
+	ThirdPersonCameraController.enable()
+
+	waitForAttribute(character, function(value)
+		return value ~= true
+	end, settings.RagdollSeconds + settings.RagdollWaitMargin)
+	task.wait(settings.WakeDelay)
+	if released then
+		return
+	end
+	ThirdPersonCameraController.snap()
+	wakeBlur()
+	tweenFade(1, settings.WakeFadeSeconds)
 end
 
 function CutsceneController.isActive(): boolean
@@ -1084,7 +1223,9 @@ function CutsceneController.release()
 	if gui then
 		gui.Enabled = false
 	end
+	stopLandingCamera()
 	unbindCamera()
+	ThirdPersonCameraController.enable()
 	setCoreGuiEnabled(true)
 	fadeOut()
 	stopAllMusic(Config.Cutscene.Audio.MusicFadeOutSeconds)
@@ -1149,6 +1290,7 @@ function CutsceneController.start()
 
 		local target = waitForTarget()
 		if not target then
+			ThirdPersonCameraController.enable()
 			player:SetAttribute(PRELOADED_ATTRIBUTE, true)
 			return
 		end
