@@ -12,7 +12,6 @@ local CAMERA_BIND = "FirstPersonCamera"
 local RAGDOLL_ATTRIBUTE = "Ragdolled"
 local MAX_DELTA_TIME = 0.1
 local SPRING_STEP = 1 / 120
-local THUMBSTICK_DEADZONE = 0.15
 local EPSILON = 0.001
 local NOISE_SEED_PITCH = 17.3
 local NOISE_SEED_YAW = 41.9
@@ -23,8 +22,6 @@ type Spring = {
 	position: number,
 	velocity: number,
 }
-
-local UserGameSettings = UserSettings():GetService("UserGameSettings")
 
 local isStarted = false
 local enabled = false
@@ -38,11 +35,16 @@ castParams.RespectCanCollide = true
 
 local yaw = 0
 local pitch = 0
-local lookDelta = Vector2.zero
+local targetYaw = 0
+local targetPitch = 0
+local mouseDelta = Vector2.zero
+local touchDelta = Vector2.zero
 local stick = Vector2.zero
+local stickHoldTime = 0
 local touchInput: InputObject? = nil
 local eyeHeight: number? = nil
 local eyeY: number? = nil
+local ragdollView: CFrame? = nil
 local fieldOfView = Config.Camera.FieldOfView
 local elapsed = 0
 local bobPhase = 0
@@ -52,6 +54,9 @@ local turnRoll = 0
 local airSpeed = 0
 local impact: Spring = { position = 0, velocity = 0 }
 local autoRotateOverridden = false
+local crosshairGui: ScreenGui? = nil
+local crosshairWanted = false
+local hudHidden = false
 
 local function damp(current: number, target: number, speed: number, dt: number): number
 	return current + (target - current) * (1 - math.exp(-speed * dt))
@@ -81,21 +86,21 @@ local function isSuspended(): boolean
 	return false
 end
 
-local function isHeadPart(part: BasePart): boolean
-	if part.Name == "Head" then
-		return true
+local function isVisiblePart(part: BasePart): boolean
+	if part:FindFirstAncestorOfClass("Accessory") then
+		return false
 	end
-	return part:FindFirstAncestorOfClass("Accessory") ~= nil
+	return table.find(Config.Camera.VisibleParts, part.Name) ~= nil
 end
 
 local function trackPart(descendant: Instance)
 	if not descendant:IsA("BasePart") or descendant.Name == "HumanoidRootPart" then
 		return
 	end
-	if isHeadPart(descendant) or not Config.Camera.ShowBody then
-		table.insert(hiddenParts, descendant)
-	else
+	if isVisiblePart(descendant) then
 		table.insert(visibleParts, descendant)
+	else
+		table.insert(hiddenParts, descendant)
 	end
 end
 
@@ -140,6 +145,30 @@ local function setBodyVisibility(hidden: boolean)
 	end
 end
 
+local function findCrosshair(): ScreenGui?
+	local current = crosshairGui
+	if current and current.Parent then
+		return current
+	end
+	local playerGui = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	local found = if playerGui then playerGui:FindFirstChild(Config.Camera.CrosshairGuiName) else nil
+	crosshairGui = if found and found:IsA("ScreenGui") then found else nil
+	return crosshairGui
+end
+
+local function applyCrosshair()
+	local screen = findCrosshair()
+	local shown = crosshairWanted and not hudHidden
+	if screen and screen.Enabled ~= shown then
+		screen.Enabled = shown
+	end
+end
+
+local function setCrosshair(wanted: boolean)
+	crosshairWanted = wanted
+	applyCrosshair()
+end
+
 local function setAutoRotate(humanoid: Humanoid?, faceCamera: boolean)
 	if not humanoid then
 		return
@@ -169,35 +198,73 @@ local function stepSpring(spring: Spring, stiffness: number, damping: number, dt
 	end
 end
 
+local function stickCurve(value: number, deadzone: number, curvature: number): number
+	local magnitude = math.abs(value)
+	if magnitude <= deadzone then
+		return 0
+	end
+	local normalized = math.clamp((magnitude - deadzone) / (1 - deadzone), 0, 1)
+	local shaped = if curvature > EPSILON
+		then (math.exp(curvature * normalized) - 1) / (math.exp(curvature) - 1)
+		else normalized
+	return math.sign(value) * shaped
+end
+
+local function pixelLook(delta: Vector2, settings: { DegreesPerPixel: number, VerticalScale: number, Multiplier: number }): Vector2
+	local degrees = settings.DegreesPerPixel * settings.Multiplier
+	return Vector2.new(delta.X * degrees, delta.Y * degrees * settings.VerticalScale)
+end
+
+local function gamepadLook(dt: number): Vector2
+	local settings = Config.Camera.Look.Gamepad
+	local x = stickCurve(stick.X, settings.Deadzone, settings.Curve)
+	local y = stickCurve(stick.Y, settings.Deadzone, settings.Curve)
+	if x == 0 and y == 0 then
+		stickHoldTime = 0
+		return Vector2.zero
+	end
+	local acceleration = settings.Acceleration
+	local pushed = math.max(math.abs(stick.X), math.abs(stick.Y)) >= acceleration.Threshold
+	stickHoldTime = if pushed then stickHoldTime + dt else 0
+	local ramp = math.clamp(stickHoldTime / math.max(acceleration.RampSeconds, EPSILON), 0, 1)
+	local boost = 1 + acceleration.Bonus * ramp * ramp
+	local degrees = settings.DegreesPerSecond * settings.Multiplier * boost * dt
+	return Vector2.new(x * degrees, -y * degrees * settings.VerticalScale)
+end
+
 local function readLook(dt: number)
 	local settings = Config.Camera
 	if UserInputService.MouseEnabled then
 		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 		UserInputService.MouseIconEnabled = false
-		lookDelta += UserInputService:GetMouseDelta() * settings.MouseSensitivity * UserGameSettings.MouseSensitivity
+		mouseDelta += UserInputService:GetMouseDelta()
 	end
-	local magnitude = stick.Magnitude
-	if magnitude > THUMBSTICK_DEADZONE then
-		local scaled = stick.Unit * ((magnitude - THUMBSTICK_DEADZONE) / (1 - THUMBSTICK_DEADZONE))
-		lookDelta += Vector2.new(scaled.X, -scaled.Y) * settings.GamepadSpeed * dt
-	end
-	local deltaYaw = -math.rad(lookDelta.X)
+	local look = pixelLook(mouseDelta, settings.Look.Mouse) + pixelLook(touchDelta, settings.Look.Touch) + gamepadLook(dt)
+	mouseDelta = Vector2.zero
+	touchDelta = Vector2.zero
+	local limit = settings.Look.MaxDegreesPerFrame
+	look = Vector2.new(math.clamp(look.X, -limit, limit), math.clamp(look.Y, -limit, limit))
+
+	targetYaw = (targetYaw - math.rad(look.X)) % TWO_PI
+	targetPitch = math.clamp(targetPitch - math.rad(look.Y), math.rad(settings.PitchMin), math.rad(settings.PitchMax))
+	local blend = 1 - math.exp(-settings.LookSmoothing * dt)
+	local yawDifference = (targetYaw - yaw + math.pi) % TWO_PI - math.pi
+	local deltaYaw = yawDifference * blend
 	yaw = (yaw + deltaYaw) % TWO_PI
-	pitch = math.clamp(pitch - math.rad(lookDelta.Y), math.rad(settings.PitchMin), math.rad(settings.PitchMax))
-	lookDelta = Vector2.zero
+	pitch += (targetPitch - pitch) * blend
+
 	local turnRate = deltaYaw / math.max(dt, EPSILON)
 	local turnLimit = math.rad(settings.TurnRoll.MaxDegrees)
 	local turnTarget = math.clamp(turnRate * math.rad(settings.TurnRoll.DegreesPerRadian), -turnLimit, turnLimit)
 	turnRoll = damp(turnRoll, turnTarget, settings.TurnRoll.Smoothing, dt)
 end
 
-local function eyePosition(character: Model, root: BasePart, ragdolled: boolean, dt: number): Vector3
+local function eyePosition(character: Model, root: BasePart, dt: number): Vector3
 	local settings = Config.Camera
 	local head = character:FindFirstChild("Head")
-	if ragdolled or not head or not head:IsA("BasePart") then
-		local fallback = if head and head:IsA("BasePart") then head.Position else root.Position
-		eyeY = fallback.Y
-		return fallback
+	if not head or not head:IsA("BasePart") then
+		eyeY = root.Position.Y
+		return root.Position
 	end
 	local measured = root.CFrame:PointToObjectSpace(head.Position).Y + settings.EyeLift
 	eyeHeight = if eyeHeight then damp(eyeHeight, measured, settings.EyeHeightSmoothing, dt) else measured
@@ -213,6 +280,19 @@ local function eyePosition(character: Model, root: BasePart, ragdolled: boolean,
 	return anchor + offset
 end
 
+local function ragdollCFrame(character: Model, root: BasePart, dt: number): CFrame
+	local settings = Config.Camera
+	local head = character:FindFirstChild("Head")
+	local source = if head and head:IsA("BasePart") then head.CFrame else root.CFrame
+	local target = source * CFrame.new(0, settings.EyeLift, -settings.EyeForward)
+	local current = ragdollView
+	if current then
+		target = current:Lerp(target, 1 - math.exp(-settings.RagdollViewSmoothing * dt))
+	end
+	ragdollView = target
+	return target
+end
+
 local function update(dt: number)
 	local camera = Workspace.CurrentCamera
 	if not camera then
@@ -222,9 +302,11 @@ local function update(dt: number)
 	if isSuspended() then
 		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 		UserInputService.MouseIconEnabled = true
-		lookDelta = Vector2.zero
+		mouseDelta = Vector2.zero
+		touchDelta = Vector2.zero
 		restoreAutoRotate()
 		setBodyVisibility(false)
+		setCrosshair(false)
 		return
 	end
 	dt = math.clamp(dt, 0, MAX_DELTA_TIME)
@@ -234,18 +316,34 @@ local function update(dt: number)
 
 	local character, humanoid, root = getCharacterParts()
 	if not character or not root then
+		setCrosshair(false)
 		return
 	end
+	setBodyVisibility(true)
+
+	local ragdolled = character:GetAttribute(RAGDOLL_ATTRIBUTE) == true
+	setCrosshair(not ragdolled)
+	if ragdolled then
+		restoreAutoRotate()
+		local view = ragdollCFrame(character, root, dt)
+		camera.CFrame = view
+		camera.Focus = view
+		fieldOfView = damp(fieldOfView, settings.FieldOfView, settings.FovSmoothing, dt)
+		camera.FieldOfView = fieldOfView
+		airSpeed = 0
+		bobWeight = 0
+		return
+	end
+	ragdollView = nil
 
 	local velocity = root.AssemblyLinearVelocity
 	local planarSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
 	local walkSpeed = if humanoid then math.max(humanoid.WalkSpeed, 1) else 16
 	local grounded = humanoid ~= nil and humanoid.FloorMaterial ~= Enum.Material.Air
-	local ragdolled = character:GetAttribute(RAGDOLL_ATTRIBUTE) == true
 	local alive = humanoid ~= nil and humanoid.Health > 0
 
 	if grounded then
-		if airSpeed < 0 and not ragdolled then
+		if airSpeed < 0 then
 			local impactSettings = settings.Impact
 			local strength = math.clamp((-airSpeed - impactSettings.MinSpeed) / impactSettings.MaxSpeed, 0, 1)
 			impact.velocity -= strength * impactSettings.Kick
@@ -256,7 +354,7 @@ local function update(dt: number)
 	end
 	stepSpring(impact, settings.Impact.Stiffness, settings.Impact.Damping, dt)
 
-	local moveRatio = if grounded and not ragdolled then math.clamp(planarSpeed / walkSpeed, 0, 1.5) else 0
+	local moveRatio = if grounded then math.clamp(planarSpeed / walkSpeed, 0, 1.5) else 0
 	bobWeight = damp(bobWeight, moveRatio, settings.Bob.Smoothing, dt)
 	bobPhase = (bobPhase + planarSpeed * dt * math.pi / math.max(settings.Bob.StrideStuds, 0.1)) % (TWO_PI * 2)
 	local bobOffset = Vector3.new(
@@ -270,7 +368,7 @@ local function update(dt: number)
 	local yawRotation = CFrame.Angles(0, yaw, 0)
 	local localVelocity = yawRotation:VectorToObjectSpace(velocity)
 	local strafeTarget = math.clamp(-localVelocity.X / walkSpeed, -1, 1) * math.rad(settings.StrafeTiltDegrees)
-	strafeRoll = damp(strafeRoll, if ragdolled then 0 else strafeTarget, settings.TiltSmoothing, dt)
+	strafeRoll = damp(strafeRoll, strafeTarget, settings.TiltSmoothing, dt)
 
 	local breathing = settings.Breathing
 	local breathAmount = math.rad(breathing.Degrees) * (1 - breathing.MovingReduction * math.min(bobWeight, 1))
@@ -280,7 +378,7 @@ local function update(dt: number)
 	local breathRoll = math.noise(noiseTime, NOISE_SEED_ROLL) * breathAmount * 0.5
 	local impactPitch = math.rad(impact.position * settings.Impact.PitchDegreesPerStud)
 
-	local eye = eyePosition(character, root, ragdolled, dt)
+	local eye = eyePosition(character, root, dt)
 	local rotation = yawRotation * CFrame.Angles(pitch, 0, 0)
 	camera.CFrame = CFrame.new(eye)
 		* rotation
@@ -292,9 +390,7 @@ local function update(dt: number)
 	fieldOfView = damp(fieldOfView, settings.FieldOfView + speedBoost, settings.FovSmoothing, dt)
 	camera.FieldOfView = fieldOfView
 
-	setBodyVisibility(not ragdolled)
-
-	local faceCamera = alive and not ragdolled and not (humanoid :: Humanoid).Sit
+	local faceCamera = alive and not (humanoid :: Humanoid).Sit
 	setAutoRotate(humanoid, faceCamera)
 	if faceCamera then
 		root.CFrame = CFrame.new(root.Position) * yawRotation
@@ -321,7 +417,7 @@ local function onInputChanged(input: InputObject)
 		return
 	end
 	if input == touchInput then
-		lookDelta += Vector2.new(input.Delta.X, input.Delta.Y) * Config.Camera.TouchSensitivity
+		touchDelta += Vector2.new(input.Delta.X, input.Delta.Y)
 	elseif input.KeyCode == Enum.KeyCode.Thumbstick2 then
 		stick = Vector2.new(input.Position.X, input.Position.Y)
 	end
@@ -336,9 +432,14 @@ function FirstPersonCameraController.snap()
 		end
 	end
 	pitch = math.rad(Config.Camera.DefaultPitch)
+	targetYaw = yaw
+	targetPitch = pitch
 	eyeHeight = nil
 	eyeY = nil
-	lookDelta = Vector2.zero
+	ragdollView = nil
+	mouseDelta = Vector2.zero
+	touchDelta = Vector2.zero
+	stickHoldTime = 0
 	turnRoll = 0
 	strafeRoll = 0
 	bobWeight = 0
@@ -351,6 +452,11 @@ function FirstPersonCameraController.isEnabled(): boolean
 	return enabled
 end
 
+function FirstPersonCameraController.setHudHidden(hidden: boolean)
+	hudHidden = hidden
+	applyCrosshair()
+end
+
 function FirstPersonCameraController.enable()
 	if enabled then
 		return
@@ -360,6 +466,9 @@ function FirstPersonCameraController.enable()
 	FirstPersonCameraController.snap()
 	local camera = Workspace.CurrentCamera
 	fieldOfView = if camera then camera.FieldOfView else Config.Camera.FieldOfView
+	if UserInputService.MouseEnabled then
+		UserInputService:GetMouseDelta()
+	end
 	RunService:BindToRenderStep(CAMERA_BIND, Enum.RenderPriority.Camera.Value + 1, update)
 end
 
@@ -370,11 +479,13 @@ function FirstPersonCameraController.disable()
 	enabled = false
 	touchInput = nil
 	stick = Vector2.zero
+	stickHoldTime = 0
 	pcall(function()
 		RunService:UnbindFromRenderStep(CAMERA_BIND)
 	end)
 	restoreAutoRotate()
 	setBodyVisibility(false)
+	setCrosshair(false)
 	watchCharacter(nil)
 	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 	UserInputService.MouseIconEnabled = true
@@ -389,6 +500,13 @@ function FirstPersonCameraController.start()
 		return
 	end
 	isStarted = true
+	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+	table.insert(connections, playerGui.ChildAdded:Connect(function(child)
+		if child.Name == Config.Camera.CrosshairGuiName then
+			task.defer(applyCrosshair)
+		end
+	end))
+	applyCrosshair()
 	table.insert(connections, UserInputService.InputBegan:Connect(onInputBegan))
 	table.insert(connections, UserInputService.InputEnded:Connect(onInputEnded))
 	table.insert(connections, UserInputService.InputChanged:Connect(onInputChanged))

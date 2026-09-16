@@ -14,7 +14,7 @@ local Config = require(Shared:WaitForChild("Modules"):WaitForChild("Config"))
 local Blink = require(ReplicatedStorage:WaitForChild("Blink"):WaitForChild("Client"))
 local WRagdoll = require(ReplicatedStorage:WaitForChild("WRagdoll"))
 local FootstepsController = require(script.Parent.Parent:WaitForChild("FootstepsController"))
-local ThirdPersonCameraController = require(script.Parent:WaitForChild("ThirdPersonCameraController"))
+local FirstPersonCameraController = require(script.Parent:WaitForChild("FirstPersonCameraController"))
 
 local CutsceneController = {}
 
@@ -22,8 +22,6 @@ local CAMERA_PART_NAME = "Cutscene_Camera"
 local CAMERA_PART_TIMEOUT = 30
 local CAMERA_PART_POLL = 0.25
 local CAMERA_BIND = "CutsceneCamera"
-local LANDING_BIND = "CutsceneLandingCamera"
-local LANDING_PROBE_DIRECTIONS = 8
 local LANDING_POLL = 0.05
 local WAKE_BLUR_NAME = "CutsceneWakeBlur"
 local FOV_ATTRIBUTE = "FieldOfView"
@@ -1047,55 +1045,6 @@ local function tweenFade(transparency: number, seconds: number)
 	tween.Completed:Wait()
 end
 
-local function landingCameraPosition(character: Model, root: BasePart): Vector3
-	local settings = Config.Cutscene.Landing
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { character }
-	params.RespectCanCollide = true
-	local floor = Workspace:Raycast(root.Position, -Vector3.yAxis * (settings.DropHeight * 2), params)
-	local ground = if floor then floor.Position else root.Position - Vector3.yAxis * settings.DropHeight
-	local origin = ground + Vector3.yAxis * settings.CameraHeight
-	local best = origin
-	local bestLength = -1
-	for index = 0, LANDING_PROBE_DIRECTIONS - 1 do
-		local angle = index / LANDING_PROBE_DIRECTIONS * math.pi * 2
-		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
-		local hit = Workspace:Raycast(origin, direction * settings.CameraDistance, params)
-		local length = if hit then math.max(hit.Distance - settings.CameraWallPadding, 0) else settings.CameraDistance
-		if length > bestLength then
-			bestLength = length
-			best = origin + direction * length
-		end
-	end
-	return best
-end
-
-local function startLandingCamera(character: Model, root: BasePart)
-	if not cameraBound then
-		return
-	end
-	local settings = Config.Cutscene.Landing
-	local position = landingCameraPosition(character, root)
-	local look = root.Position
-	currentFov = settings.CameraFieldOfView
-	RunService:BindToRenderStep(LANDING_BIND, Enum.RenderPriority.Camera.Value, function(dt)
-		if not root.Parent then
-			return
-		end
-		look = look:Lerp(root.Position, 1 - math.exp(-settings.CameraSmoothing * dt))
-		if (look - position).Magnitude > PIVOT_EPSILON then
-			currentCFrame = CFrame.lookAt(position, look)
-		end
-	end)
-end
-
-local function stopLandingCamera()
-	pcall(function()
-		RunService:UnbindFromRenderStep(LANDING_BIND)
-	end)
-end
-
 local function wakeBlur()
 	local camera = Workspace.CurrentCamera
 	local settings = Config.Cutscene.Landing
@@ -1155,8 +1104,8 @@ local function landCharacter(character: Model)
 			character:PivotTo(CFrame.lookAt(position, position + look))
 		end
 		humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-		if ThirdPersonCameraController.isEnabled() then
-			ThirdPersonCameraController.snap()
+		if FirstPersonCameraController.isEnabled() then
+			FirstPersonCameraController.snap()
 		end
 	end
 	local connection
@@ -1174,16 +1123,15 @@ local function landCharacter(character: Model)
 	local hasRagdoll = waitForAttribute(character, function(value)
 		return value ~= nil
 	end, settings.AttributeWaitSeconds)
-	local root = character:FindFirstChild("HumanoidRootPart")
-	if released or not hasRagdoll or character:GetAttribute(RAGDOLL_ATTRIBUTE) ~= true or not root or not root:IsA("BasePart") then
+	if released or not hasRagdoll or character:GetAttribute(RAGDOLL_ATTRIBUTE) ~= true then
 		return
 	end
 
-	startLandingCamera(character, root)
+	unbindCamera()
+	FirstPersonCameraController.enable()
 	tweenFade(1, settings.RevealSeconds)
 	task.wait(settings.BlackoutDelay)
 	if released then
-		stopLandingCamera()
 		return
 	end
 	local playerGui = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
@@ -1191,9 +1139,6 @@ local function landCharacter(character: Model)
 		createFade(playerGui)
 	end
 	tweenFade(0, settings.BlackoutSeconds)
-	stopLandingCamera()
-	unbindCamera()
-	ThirdPersonCameraController.enable()
 
 	waitForAttribute(character, function(value)
 		return value ~= true
@@ -1202,7 +1147,7 @@ local function landCharacter(character: Model)
 	if released then
 		return
 	end
-	ThirdPersonCameraController.snap()
+	FirstPersonCameraController.snap()
 	wakeBlur()
 	tweenFade(1, settings.WakeFadeSeconds)
 end
@@ -1223,9 +1168,9 @@ function CutsceneController.release()
 	if gui then
 		gui.Enabled = false
 	end
-	stopLandingCamera()
 	unbindCamera()
-	ThirdPersonCameraController.enable()
+	FirstPersonCameraController.enable()
+	FirstPersonCameraController.setHudHidden(false)
 	setCoreGuiEnabled(true)
 	fadeOut()
 	stopAllMusic(Config.Cutscene.Audio.MusicFadeOutSeconds)
@@ -1267,6 +1212,7 @@ function CutsceneController.start()
 	end
 	isStarted = true
 	setCoreGuiEnabled(false)
+	FirstPersonCameraController.setHudHidden(true)
 	skipDisconnect = Blink.CutsceneSkipState.On(onSkipState)
 
 	task.spawn(function()
@@ -1290,7 +1236,7 @@ function CutsceneController.start()
 
 		local target = waitForTarget()
 		if not target then
-			ThirdPersonCameraController.enable()
+			FirstPersonCameraController.enable()
 			player:SetAttribute(PRELOADED_ATTRIBUTE, true)
 			return
 		end
