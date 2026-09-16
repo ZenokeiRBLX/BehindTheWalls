@@ -99,6 +99,7 @@ Config.Cutscene = {
 		TumbleSpeed = 4,
 		RagdollSeconds = 3,
 		StandLift = 2,
+		FaceTargetName = "Note",
 		RevealSeconds = 0.2,
 		BlackoutDelay = 1.3,
 		BlackoutSeconds = 0.35,
@@ -129,7 +130,7 @@ Config.Camera = {
 		Mouse = {
 			DegreesPerPixel = 0.5,
 			VerticalScale = 0.77,
-			Multiplier = 1,
+			Multiplier = 0.55,
 		},
 		Touch = {
 			DegreesPerPixel = 1,
@@ -137,15 +138,15 @@ Config.Camera = {
 			Multiplier = 1,
 		},
 		Gamepad = {
-			DegreesPerSecond = 180,
+			DegreesPerSecond = 150,
 			VerticalScale = 0.77,
 			Multiplier = 1,
 			Deadzone = 0.15,
-			Curve = 2,
+			Curve = 2.2,
 			Acceleration = {
-				Threshold = 0.9,
-				Bonus = 1.6,
-				RampSeconds = 0.9,
+				Threshold = 0.92,
+				Bonus = 1.2,
+				RampSeconds = 1,
 			},
 		},
 		MaxDegreesPerFrame = 45,

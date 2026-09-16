@@ -1077,6 +1077,27 @@ local function waitForAttribute(character: Model, predicate: (any) -> boolean, s
 	return false
 end
 
+local function landingLook(root: BasePart): Vector3
+	local name = Config.Cutscene.Landing.FaceTargetName
+	local target = if name then Workspace:FindFirstChild(name, true) else nil
+	local position: Vector3? = nil
+	if target and target:IsA("Model") then
+		position = target:GetPivot().Position
+	elseif target and target:IsA("BasePart") then
+		position = target.Position
+	end
+	if position then
+		local flat = Vector3.new(position.X - root.Position.X, 0, position.Z - root.Position.Z)
+		if flat.Magnitude > PIVOT_EPSILON then
+			return flat.Unit
+		end
+	end
+	if name then
+		warn("CutsceneController: Workspace." .. name .. " not found, facing the way the character landed")
+	end
+	return flatForward(root.CFrame)
+end
+
 local function landCharacter(character: Model)
 	local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 5)
 	if not humanoid or not humanoid:IsA("Humanoid") then
@@ -1097,7 +1118,7 @@ local function landCharacter(character: Model)
 		humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
 		if root and root:IsA("BasePart") then
 			local position = root.Position + Vector3.yAxis * settings.StandLift
-			local look = flatForward(root.CFrame)
+			local look = landingLook(root)
 			root.CanCollide = true
 			root.AssemblyLinearVelocity = Vector3.zero
 			root.AssemblyAngularVelocity = Vector3.zero
