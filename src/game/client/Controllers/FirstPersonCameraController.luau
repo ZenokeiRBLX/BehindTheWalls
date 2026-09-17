@@ -35,8 +35,6 @@ castParams.RespectCanCollide = true
 
 local yaw = 0
 local pitch = 0
-local targetYaw = 0
-local targetPitch = 0
 local mouseDelta = Vector2.zero
 local touchDelta = Vector2.zero
 local stick = Vector2.zero
@@ -245,13 +243,9 @@ local function readLook(dt: number)
 	local limit = settings.Look.MaxDegreesPerFrame
 	look = Vector2.new(math.clamp(look.X, -limit, limit), math.clamp(look.Y, -limit, limit))
 
-	targetYaw = (targetYaw - math.rad(look.X)) % TWO_PI
-	targetPitch = math.clamp(targetPitch - math.rad(look.Y), math.rad(settings.PitchMin), math.rad(settings.PitchMax))
-	local blend = 1 - math.exp(-settings.LookSmoothing * dt)
-	local yawDifference = (targetYaw - yaw + math.pi) % TWO_PI - math.pi
-	local deltaYaw = yawDifference * blend
+	local deltaYaw = -math.rad(look.X)
 	yaw = (yaw + deltaYaw) % TWO_PI
-	pitch += (targetPitch - pitch) * blend
+	pitch = math.clamp(pitch - math.rad(look.Y), math.rad(settings.PitchMin), math.rad(settings.PitchMax))
 
 	local turnRate = deltaYaw / math.max(dt, EPSILON)
 	local turnLimit = math.rad(settings.TurnRoll.MaxDegrees)
@@ -432,8 +426,6 @@ function FirstPersonCameraController.snap()
 		end
 	end
 	pitch = math.rad(Config.Camera.DefaultPitch)
-	targetYaw = yaw
-	targetPitch = pitch
 	eyeHeight = nil
 	eyeY = nil
 	ragdollView = nil
