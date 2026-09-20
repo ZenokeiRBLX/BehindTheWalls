@@ -1,0 +1,6 @@
+{
+  "name": "SignalCorridor_Prototype",
+  "tree": {
+    "$path": "src/prototypes/SignalCorridor.model.json"
+  }
+}

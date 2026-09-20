@@ -1,0 +1,51 @@
+{
+  "name": "SignalCorridorTest",
+  "tree": {
+    "$className": "DataModel",
+    "Workspace": {
+      "$className": "Workspace",
+      "$properties": {
+        "StreamingEnabled": false
+      },
+      "SignalCorridor_Prototype": {
+        "$path": "src/prototypes/SignalCorridor.model.json"
+      },
+      "TestSpawn": {
+        "$className": "SpawnLocation",
+        "$properties": {
+          "Anchored": true,
+          "Transparency": 1,
+          "CanCollide": false,
+          "Neutral": true,
+          "Duration": 0,
+          "Size": [4, 1, 4],
+          "Position": [0, 0.5, 0]
+        }
+      }
+    },
+    "Lighting": {
+      "$className": "Lighting",
+      "$properties": {
+        "Ambient": [0.035, 0.025, 0.035],
+        "OutdoorAmbient": [0.035, 0.025, 0.035],
+        "Brightness": 0,
+        "ClockTime": 0,
+        "GlobalShadows": true,
+        "EnvironmentDiffuseScale": 0.25,
+        "EnvironmentSpecularScale": 1,
+        "ExposureCompensation": -0.1,
+        "FogColor": [0.09, 0.055, 0.065],
+        "FogStart": 12,
+        "FogEnd": 65
+      },
+      "ScreenBloom": {
+        "$className": "BloomEffect",
+        "$properties": {"Intensity": 0.3, "Size": 28, "Threshold": 1.1}
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "$properties": {"CameraMode": "LockFirstPerson", "CharacterWalkSpeed": 10}
+    }
+  }
+}
