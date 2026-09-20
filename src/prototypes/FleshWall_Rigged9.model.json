@@ -1,0 +1,378 @@
+{
+  "className": "Model",
+  "children": [
+    {
+      "name": "Wall",
+      "className": "MeshPart",
+      "properties": {
+        "MeshId": "rbxassetid://112866954522273",
+        "Size": {
+          "Vector3": [
+            40.19767379760742,
+            18.911672592163086,
+            5.385672569274902
+          ]
+        },
+        "CFrame": {
+          "CFrame": {
+            "position": [
+              0,
+              9.455836296081543,
+              0
+            ],
+            "orientation": [
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                0,
+                1,
+                0
+              ],
+              [
+                0,
+                0,
+                1
+              ]
+            ]
+          }
+        },
+        "Color": {
+          "Color3": [
+            1,
+            1,
+            1
+          ]
+        },
+        "Material": "SmoothPlastic",
+        "Anchored": true,
+        "CanCollide": true
+      },
+      "children": [
+        {
+          "name": "Wall_Lower_Left",
+          "className": "Bone",
+          "properties": {
+            "CFrame": {
+              "CFrame": {
+                "position": [
+                  -16.07906951904297,
+                  -7.564669036865235,
+                  0
+                ],
+                "orientation": [
+                  [
+                    1,
+                    0,
+                    0
+                  ],
+                  [
+                    0,
+                    1,
+                    0
+                  ],
+                  [
+                    0,
+                    0,
+                    1
+                  ]
+                ]
+              }
+            }
+          },
+          "children": []
+        },
+        {
+          "name": "Wall_Lower_Center",
+          "className": "Bone",
+          "properties": {
+            "CFrame": {
+              "CFrame": {
+                "position": [
+                  0,
+                  -7.564669036865235,
+                  0
+                ],
+                "orientation": [
+                  [
+                    1,
+                    0,
+                    0
+                  ],
+                  [
+                    0,
+                    1,
+                    0
+                  ],
+                  [
+                    0,
+                    0,
+                    1
+                  ]
+                ]
+              }
+            }
+          },
+          "children": []
+        },
+        {
+          "name": "Wall_Lower_Right",
+          "className": "Bone",
+          "properties": {
+            "CFrame": {
+              "CFrame": {
+                "position": [
+                  16.07906951904297,
+                  -7.564669036865235,
+                  0
+                ],
+                "orientation": [
+                  [
+                    1,
+                    0,
+                    0
+                  ],
+                  [
+                    0,
+                    1,
+                    0
+                  ],
+                  [
+                    0,
+                    0,
+                    1
+                  ]
+                ]
+              }
+            }
+          },
+          "children": []
+        },
+        {
+          "name": "Wall_Middle_Left",
+          "className": "Bone",
+          "properties": {
+            "CFrame": {
+              "CFrame": {
+                "position": [
+                  -16.07906951904297,
+                  0,
+                  0
+                ],
+                "orientation": [
+                  [
+                    1,
+                    0,
+                    0
+                  ],
+                  [
+                    0,
+                    1,
+                    0
+                  ],
+                  [
+                    0,
+                    0,
+                    1
+                  ]
+                ]
+              }
+            }
+          },
+          "children": []
+        },
+        {
+          "name": "Wall_Middle_Center",
+          "className": "Bone",
+          "properties": {
+            "CFrame": {
+              "CFrame": {
+                "position": [
+                  0,
+                  0,
+                  0
+                ],
+                "orientation": [
+                  [
+                    1,
+                    0,
+                    0
+                  ],
+                  [
+                    0,
+                    1,
+                    0
+                  ],
+                  [
+                    0,
+                    0,
+                    1
+                  ]
+                ]
+              }
+            }
+          },
+          "children": []
+        },
+        {
+          "name": "Wall_Middle_Right",
+          "className": "Bone",
+          "properties": {
+            "CFrame": {
+              "CFrame": {
+                "position": [
+                  16.07906951904297,
+                  0,
+                  0
+                ],
+                "orientation": [
+                  [
+                    1,
+                    0,
+                    0
+                  ],
+                  [
+                    0,
+                    1,
+                    0
+                  ],
+                  [
+                    0,
+                    0,
+                    1
+                  ]
+                ]
+              }
+            }
+          },
+          "children": []
+        },
+        {
+          "name": "Wall_Upper_Left",
+          "className": "Bone",
+          "properties": {
+            "CFrame": {
+              "CFrame": {
+                "position": [
+                  -16.07906951904297,
+                  7.564669036865235,
+                  0
+                ],
+                "orientation": [
+                  [
+                    1,
+                    0,
+                    0
+                  ],
+                  [
+                    0,
+                    1,
+                    0
+                  ],
+                  [
+                    0,
+                    0,
+                    1
+                  ]
+                ]
+              }
+            }
+          },
+          "children": []
+        },
+        {
+          "name": "Wall_Upper_Center",
+          "className": "Bone",
+          "properties": {
+            "CFrame": {
+              "CFrame": {
+                "position": [
+                  0,
+                  7.564669036865235,
+                  0
+                ],
+                "orientation": [
+                  [
+                    1,
+                    0,
+                    0
+                  ],
+                  [
+                    0,
+                    1,
+                    0
+                  ],
+                  [
+                    0,
+                    0,
+                    1
+                  ]
+                ]
+              }
+            }
+          },
+          "children": []
+        },
+        {
+          "name": "Wall_Upper_Right",
+          "className": "Bone",
+          "properties": {
+            "CFrame": {
+              "CFrame": {
+                "position": [
+                  16.07906951904297,
+                  7.564669036865235,
+                  0
+                ],
+                "orientation": [
+                  [
+                    1,
+                    0,
+                    0
+                  ],
+                  [
+                    0,
+                    1,
+                    0
+                  ],
+                  [
+                    0,
+                    0,
+                    1
+                  ]
+                ]
+              }
+            }
+          },
+          "children": []
+        },
+        {
+          "name": "WetFlesh",
+          "className": "SurfaceAppearance",
+          "properties": {
+            "ColorMap": "rbxassetid://114798040361975",
+            "NormalMap": "rbxassetid://136727296834708",
+            "RoughnessMap": "rbxassetid://114387089191722",
+            "MetalnessMap": ""
+          },
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "AnimationController",
+      "className": "AnimationController",
+      "properties": {},
+      "children": [
+        {
+          "name": "Animator",
+          "className": "Animator",
+          "properties": {},
+          "children": []
+        }
+      ]
+    }
+  ]
+}

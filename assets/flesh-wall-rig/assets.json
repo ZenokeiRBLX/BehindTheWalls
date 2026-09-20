@@ -1,0 +1,22 @@
+{
+  "placeId": 126262358232325,
+  "creatorType": "Group",
+  "creatorId": 32989368,
+  "modelPath": "Workspace.FleshWall_Rigged9",
+  "meshId": "rbxassetid://112866954522273",
+  "modelId": "rbxassetid://134860508339581",
+  "modelVersion": 2,
+  "colorMap": "rbxassetid://114798040361975",
+  "normalMap": "rbxassetid://136727296834708",
+  "roughnessMap": "rbxassetid://114387089191722",
+  "materialVariant": "Flesh_WetFolds_V2",
+  "baseMaterial": "SmoothPlastic",
+  "studsPerTile": 12,
+  "roughnessValue": 0.1882352941,
+  "boneCount": 9,
+  "sourceVertexCount": 6018,
+  "uploadedVertexCount": 36096,
+  "triangleCount": 12032,
+  "size": [40.19767379760742, 18.911672592163086, 5.385672569274902],
+  "originalMeshId": "rbxassetid://124793230321389"
+}
