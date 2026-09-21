@@ -11,7 +11,7 @@ local FlashlightSystem = {}
 
 local ASSETS_WAIT = 30
 local RAGDOLL_ATTRIBUTE = "Ragdolled"
-local VISIBLE_ATTRIBUTE = "FirstPersonVisible"
+local HANDLE_ATTRIBUTE = "FlashlightHandle"
 local GRIP_ATTACHMENT_SUFFIX = "GripAttachment$"
 local STATE_EQUIPPING = "Equipping"
 local STATE_ON = "On"
@@ -214,17 +214,6 @@ local function cloneHandle(): (Instance?, BasePart?)
 	end
 	local built = buildHandle()
 	return built, built
-end
-
-local function markVisible(handle: Instance)
-	if handle:IsA("BasePart") then
-		handle:SetAttribute(VISIBLE_ATTRIBUTE, true)
-	end
-	for _, descendant in handle:GetDescendants() do
-		if descendant:IsA("BasePart") then
-			descendant:SetAttribute(VISIBLE_ATTRIBUTE, true)
-		end
-	end
 end
 
 local function preparePart(part: Instance)
@@ -454,7 +443,7 @@ local function beginSession(player: Player, character: Model, humanoid: Humanoid
 	end
 	setHandlePhysics(handle)
 	setHandleLights(handle, false)
-	markVisible(handle)
+	handle:SetAttribute(HANDLE_ATTRIBUTE, true)
 	attachHandle(hand, handle, handlePart)
 
 	local session: Session = {

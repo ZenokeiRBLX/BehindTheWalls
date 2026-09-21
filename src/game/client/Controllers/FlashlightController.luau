@@ -2,6 +2,7 @@ local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -12,27 +13,35 @@ local FirstPersonCameraController = require(script.Parent:WaitForChild("FirstPer
 local FlashlightController = {}
 
 local ACTION_NAME = "ToggleFlashlight"
-local RENDER_BIND = "FlashlightBeam"
+local RENDER_BIND = "FlashlightView"
 local RAGDOLL_ATTRIBUTE = "Ragdolled"
+local HANDLE_ATTRIBUTE = "FlashlightHandle"
 local STATE_ON = "On"
 local STATE_EQUIPPING = "Equipping"
-local MAX_DELTA_TIME = 0.1
 
-type Beam = {
-	character: Model,
-	node: BasePart,
-	alignment: CFrame,
-	view: CFrame?,
-	connections: { RBXScriptConnection },
+type View = {
+	item: BasePart?,
+	node: BasePart?,
+	offset: Vector3Value?,
+	hiding: boolean,
 }
 
 local isStarted = false
 local connections: { RBXScriptConnection } = {}
-local playerConnections: { [Player]: { RBXScriptConnection } } = {}
-local characterConnections: { [Model]: { RBXScriptConnection } } = {}
-local beams: { [Model]: Beam } = {}
+local characterConnections: { RBXScriptConnection } = {}
+local hiddenHandleParts: { BasePart } = {}
+local view: View? = nil
 local lastPress = 0
 local renderBound = false
+local warned: { [string]: boolean } = {}
+
+local function warnOnce(key: string, message: string)
+	if warned[key] then
+		return
+	end
+	warned[key] = true
+	warn(message)
+end
 
 local function stateAttribute(): string
 	return Config.Flashlight.StateAttribute
@@ -70,147 +79,111 @@ local function findAssetFolder(): Instance?
 	return nil
 end
 
-local function hasLight(part: Instance): boolean
-	for _, descendant in part:GetDescendants() do
-		if descendant:IsA("Light") then
-			return true
-		end
-	end
-	return false
-end
-
-local function findNodeTemplate(): BasePart?
-	local roots: { Instance } = {}
+local function findClientPart(name: string): BasePart?
 	local folder = findAssetFolder()
 	local clientFolder = if folder then folder:FindFirstChild(Config.Flashlight.ClientFolder) else nil
-	if clientFolder then
-		table.insert(roots, clientFolder)
+	if not clientFolder then
+		warnOnce("clientFolder", ("FlashlightController: no %s.%s folder found under ReplicatedStorage"):format(Config.Flashlight.AssetFolder, Config.Flashlight.ClientFolder))
+		return nil
 	end
-	if folder then
-		table.insert(roots, folder)
+	local found = clientFolder:FindFirstChild(name, true)
+	if found and found:IsA("BasePart") then
+		return found
 	end
-	local assets = ReplicatedStorage:FindFirstChild("Assets")
-	if assets then
-		table.insert(roots, assets)
-	end
-	for _, root in roots do
-		for _, descendant in root:GetDescendants() do
-			if descendant:IsA("BasePart") and descendant.Name == Config.Flashlight.NodeName then
-				return descendant
-			end
-		end
-	end
-	if clientFolder then
-		for _, descendant in clientFolder:GetDescendants() do
-			if descendant:IsA("BasePart") and hasLight(descendant) then
-				return descendant
-			end
-		end
-	end
+	warnOnce("part:" .. name, ("FlashlightController: no BasePart named %s in the %s folder"):format(name, Config.Flashlight.ClientFolder))
 	return nil
 end
 
-local function buildNode(): BasePart
-	local template = findNodeTemplate()
-	local node: BasePart
-	if template then
-		node = template:Clone()
-	else
-		node = Instance.new("Part")
-		node.Name = Config.Flashlight.NodeName
-		node.Size = Vector3.new(0.2, 0.2, 0.2)
-		local attachment = Instance.new("Attachment")
-		attachment.Name = "LightAttachment"
-		attachment.Parent = node
-		local settings = Config.Flashlight.Light
-		local light = Instance.new("SpotLight")
-		light.Name = "Light"
-		light.Face = Enum.NormalId.Front
-		light.Angle = settings.Angle
-		light.Range = settings.Range
-		light.Brightness = settings.Brightness
-		light.Color = settings.Color
-		light.Shadows = settings.Shadows
-		light.Parent = attachment
-	end
-	node.Anchored = true
-	node.CanCollide = false
-	node.CanQuery = false
-	node.CanTouch = false
-	node.Massless = true
-	node.CastShadow = false
-	node.Transparency = 1
-	for _, descendant in node:GetDescendants() do
+local function prepareLocalPart(part: BasePart)
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Massless = true
+	for _, descendant in part:GetDescendants() do
 		if descendant:IsA("BasePart") then
-			descendant.Transparency = 1
 			descendant.Anchored = true
 			descendant.CanCollide = false
 			descendant.CanQuery = false
-		elseif descendant:IsA("Light") or descendant:IsA("Beam") or descendant:IsA("ParticleEmitter") then
-			(descendant :: any).Enabled = true
+			descendant.CanTouch = false
 		end
 	end
+end
+
+local function buildFallbackNode(): BasePart
+	local node = Instance.new("Part")
+	node.Name = Config.Flashlight.Local.NodeName
+	node.Size = Vector3.new(0.2, 0.2, 0.2)
+	node.Transparency = 1
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "Attachment"
+	attachment.Parent = node
+	local settings = Config.Flashlight.Light
+	local light = Instance.new("SpotLight")
+	light.Name = "Light"
+	light.Face = Enum.NormalId.Front
+	light.Angle = settings.Angle
+	light.Range = settings.Range
+	light.Brightness = settings.Brightness
+	light.Color = settings.Color
+	light.Shadows = settings.Shadows
+	light.Enabled = false
+	light.Parent = attachment
 	return node
 end
 
-local function suppressHandleLights(beam: Beam)
-	local itemName = Config.Flashlight.ItemName
-	local function suppress(light: Instance)
-		if not (light:IsA("Light") or light:IsA("Beam")) or not light:FindFirstAncestor(itemName) then
-			return
+local function setEnabled(root: Instance, enabled: boolean)
+	for _, descendant in root:GetDescendants() do
+		if descendant:IsA("Light") or descendant:IsA("Beam") or descendant:IsA("ParticleEmitter") then
+			(descendant :: any).Enabled = enabled
 		end
-		(light :: any).Enabled = false
-		table.insert(beam.connections, light:GetPropertyChangedSignal("Enabled"):Connect(function()
-			if (light :: any).Enabled then
-				(light :: any).Enabled = false
-			end
-		end))
 	end
-	for _, descendant in beam.character:GetDescendants() do
-		suppress(descendant)
-	end
-	table.insert(beam.connections, beam.character.DescendantAdded:Connect(function(descendant)
-		task.defer(suppress, descendant)
-	end))
 end
 
-local function beamDirection(node: BasePart): Vector3
-	local light = node:FindFirstChildWhichIsA("SpotLight", true) or node:FindFirstChildWhichIsA("SurfaceLight", true)
-	if not light then
-		return -Vector3.zAxis
-	end
-	local direction = Vector3.FromNormalId((light :: any).Face)
-	local holder = light.Parent
-	while holder and holder ~= node do
-		if holder:IsA("Attachment") then
-			direction = holder.CFrame:VectorToWorldSpace(direction)
-		elseif holder:IsA("BasePart") then
-			direction = node.CFrame:VectorToObjectSpace(holder.CFrame:VectorToWorldSpace(direction))
-			break
-		end
-		holder = holder.Parent
-	end
-	if direction.Magnitude < 0.001 then
-		return -Vector3.zAxis
-	end
-	return direction.Unit
+local function findOnUi(item: BasePart): Instance?
+	local settings = Config.Flashlight.Local
+	local onFx = item:FindFirstChild(settings.OnFxName, true)
+	local onUi = if onFx then onFx:FindFirstChild(settings.OnUiName, true) else item:FindFirstChild(settings.OnUiName, true)
+	return onUi
 end
 
-local function beamAlignment(node: BasePart): CFrame
-	local direction = beamDirection(node)
-	local up = if math.abs(direction.Y) > 0.99 then Vector3.xAxis else Vector3.yAxis
-	local basis = CFrame.lookAt(Vector3.zero, direction, up)
-	local adjust = Config.Flashlight.Local.RotationDegrees
-	local rotation = CFrame.Angles(math.rad(adjust[1] or 0), math.rad(adjust[2] or 0), math.rad(adjust[3] or 0))
-	return rotation * basis:Inverse()
+local function setOnUi(item: BasePart, enabled: boolean)
+	local onUi = findOnUi(item)
+	if onUi and (onUi:IsA("LayerCollector") or onUi:IsA("Light") or onUi:IsA("Beam") or onUi:IsA("ParticleEmitter")) then
+		(onUi :: any).Enabled = enabled
+	end
 end
 
-local function targetCFrame(beam: Beam): CFrame?
-	local camera = Workspace.CurrentCamera
-	if not camera then
-		return nil
+local function playItemSound(item: BasePart)
+	local sound = item:FindFirstChild(Config.Flashlight.Local.SoundName, true)
+	if sound and sound:IsA("Sound") then
+		sound:Play()
 	end
-	return camera.CFrame * CFrame.new(toVector(Config.Flashlight.Local.Offset)) * beam.alignment
+end
+
+local function findHud(): GuiObject?
+	local playerGui = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	local current: Instance? = playerGui
+	for _, name in Config.Flashlight.Local.HudPath do
+		current = if current then current:FindFirstChild(name) else nil
+	end
+	return if current and current:IsA("GuiObject") then current else nil
+end
+
+local function tweenHud(shown: boolean)
+	local hud = findHud()
+	if not hud then
+		return
+	end
+	local settings = Config.Flashlight.Local
+	local seconds = if shown then settings.HudShowSeconds else settings.HudHideSeconds
+	local goal: { [string]: any } = {}
+	if hud:IsA("ImageLabel") or hud:IsA("ImageButton") then
+		goal.ImageTransparency = if shown then 0 else 1
+	else
+		goal.BackgroundTransparency = if shown then 0 else 1
+	end
+	TweenService:Create(hud, TweenInfo.new(seconds, Enum.EasingStyle.Quad), goal):Play()
 end
 
 local function unbindRender()
@@ -223,18 +196,25 @@ local function unbindRender()
 	end)
 end
 
-local function updateBeams(dt: number)
-	dt = math.clamp(dt, 0, MAX_DELTA_TIME)
-	for _, beam in beams do
-		local target = targetCFrame(beam)
-		if not target then
-			continue
-		end
-		local smoothing = Config.Flashlight.Local.Smoothing
-		local current = beam.view
-		local view = if current then current:Lerp(target, 1 - math.exp(-smoothing * dt)) else target
-		beam.view = view
-		beam.node.CFrame = view
+local function updateView()
+	for _, part in hiddenHandleParts do
+		part.LocalTransparencyModifier = 1
+	end
+	local current = view
+	local camera = Workspace.CurrentCamera
+	if not current or not camera then
+		return
+	end
+	local settings = Config.Flashlight.Local
+	local item = current.item
+	if item and item.Parent then
+		local offset = if current.offset then current.offset.Value else toVector(settings.ShownOffset)
+		item.CFrame = camera.CFrame * CFrame.new(offset)
+	end
+	local node = current.node
+	if node and node.Parent then
+		local target = camera.CFrame * CFrame.new(toVector(settings.NodeOffset))
+		TweenService:Create(node, TweenInfo.new(settings.NodeTweenSeconds, Enum.EasingStyle.Back), { CFrame = target }):Play()
 	end
 end
 
@@ -243,107 +223,190 @@ local function bindRender()
 		return
 	end
 	renderBound = true
-	RunService:BindToRenderStep(RENDER_BIND, Enum.RenderPriority.Camera.Value + 2, updateBeams)
+	RunService:BindToRenderStep(RENDER_BIND, Enum.RenderPriority.Camera.Value + 2, updateView)
 end
 
-local function removeBeam(character: Model)
-	local beam = beams[character]
-	if not beam then
-		return
-	end
-	beams[character] = nil
-	for _, connection in beam.connections do
-		connection:Disconnect()
-	end
-	beam.node:Destroy()
-	if next(beams) == nil then
+local function releaseRenderIfIdle()
+	if view == nil and #hiddenHandleParts == 0 then
 		unbindRender()
 	end
 end
 
-local function addBeam(character: Model)
-	if beams[character] then
+local function showView()
+	if view then
+		if view.hiding then
+			local stale = view
+			view = nil
+			if stale.item then
+				stale.item:Destroy()
+			end
+			if stale.node then
+				stale.node:Destroy()
+			end
+		else
+			return
+		end
+	end
+	local camera = Workspace.CurrentCamera
+	if not camera then
 		return
 	end
-	local node = buildNode()
-	local beam: Beam = {
-		character = character,
-		node = node,
-		alignment = beamAlignment(node),
-		view = nil,
-		connections = {},
-	}
-	beams[character] = beam
-	local target = targetCFrame(beam)
-	if target then
-		beam.view = target
-		beam.node.CFrame = target
+	local settings = Config.Flashlight.Local
+
+	local itemTemplate = findClientPart(settings.ItemName)
+	local nodeTemplate = findClientPart(settings.NodeName)
+	local item = if itemTemplate then itemTemplate:Clone() else nil
+	local node = if nodeTemplate then nodeTemplate:Clone() else buildFallbackNode()
+
+	local offset: Vector3Value? = nil
+	if item then
+		prepareLocalPart(item)
+		local found = item:FindFirstChild(settings.OffsetValueName)
+		if found and found:IsA("Vector3Value") then
+			offset = found
+		else
+			offset = Instance.new("Vector3Value")
+			offset.Name = settings.OffsetValueName
+			offset.Parent = item
+		end
+		offset.Value = toVector(settings.HiddenOffset)
+		item.CFrame = camera.CFrame * CFrame.new(offset.Value)
+		item.Parent = camera
 	end
-	beam.node.Parent = Workspace.CurrentCamera or Workspace
-	suppressHandleLights(beam)
+
+	prepareLocalPart(node)
+	node.CFrame = camera.CFrame * CFrame.new(toVector(settings.NodeOffset))
+	node.Parent = camera
+
+	view = {
+		item = item,
+		node = node,
+		offset = offset,
+		hiding = false,
+	}
+	bindRender()
+
+	if item and offset then
+		TweenService:Create(offset, TweenInfo.new(settings.ShowSeconds, Enum.EasingStyle.Back), { Value = toVector(settings.ShownOffset) }):Play()
+		setOnUi(item, true)
+		playItemSound(item)
+	end
+	setEnabled(node, true)
+	tweenHud(true)
+end
+
+local function hideView()
+	local current = view
+	if not current or current.hiding then
+		return
+	end
+	current.hiding = true
+	local settings = Config.Flashlight.Local
+	tweenHud(false)
+
+	if current.node then
+		current.node:Destroy()
+		current.node = nil
+	end
+
+	local item = current.item
+	local function finish()
+		if view == current then
+			view = nil
+		end
+		if item then
+			item:Destroy()
+		end
+		releaseRenderIfIdle()
+	end
+
+	if item and item.Parent then
+		setOnUi(item, false)
+		playItemSound(item)
+		local offset = current.offset
+		if offset then
+			local tween = TweenService:Create(offset, TweenInfo.new(settings.HideSeconds), { Value = toVector(settings.HiddenOffset) })
+			tween.Completed:Once(finish)
+			tween:Play()
+			return
+		end
+	end
+	finish()
+end
+
+local function hideHandlePart(part: Instance)
+	if part:IsA("BasePart") then
+		part.LocalTransparencyModifier = 1
+		if not table.find(hiddenHandleParts, part) then
+			table.insert(hiddenHandleParts, part)
+		end
+	elseif part:IsA("Light") or part:IsA("Beam") or part:IsA("ParticleEmitter") or part:IsA("LayerCollector") then
+		(part :: any).Enabled = false
+		table.insert(characterConnections, part:GetPropertyChangedSignal("Enabled"):Connect(function()
+			if (part :: any).Enabled then
+				(part :: any).Enabled = false
+			end
+		end))
+	end
+end
+
+local function hideServerHandle(handle: Instance)
+	hideHandlePart(handle)
+	for _, descendant in handle:GetDescendants() do
+		hideHandlePart(descendant)
+	end
+	table.insert(characterConnections, handle.DescendantAdded:Connect(function(descendant)
+		task.defer(hideHandlePart, descendant)
+	end))
+	table.insert(characterConnections, handle.AncestryChanged:Connect(function()
+		if handle.Parent then
+			return
+		end
+		for index = #hiddenHandleParts, 1, -1 do
+			local part = hiddenHandleParts[index]
+			if part == handle or part:IsDescendantOf(handle) then
+				table.remove(hiddenHandleParts, index)
+			end
+		end
+		releaseRenderIfIdle()
+	end))
 	bindRender()
 end
 
-local function refreshCharacter(character: Model)
-	if character ~= Players.LocalPlayer.Character then
-		return
-	end
-	if character:GetAttribute(stateAttribute()) == STATE_ON then
-		addBeam(character)
+local function refreshState(character: Model)
+	local state = character:GetAttribute(stateAttribute())
+	if state == STATE_EQUIPPING or state == STATE_ON then
+		showView()
 	else
-		removeBeam(character)
+		hideView()
 	end
 end
 
-local function untrackCharacter(character: Model)
-	local list = characterConnections[character]
-	if list then
-		characterConnections[character] = nil
-		for _, connection in list do
-			connection:Disconnect()
-		end
+local function watchCharacter(character: Model?)
+	for _, connection in characterConnections do
+		connection:Disconnect()
 	end
-	removeBeam(character)
-end
-
-local function trackCharacter(character: Model)
-	if characterConnections[character] then
+	table.clear(characterConnections)
+	table.clear(hiddenHandleParts)
+	hideView()
+	if not character then
+		releaseRenderIfIdle()
 		return
 	end
-	local list = {}
-	characterConnections[character] = list
-	table.insert(list, character:GetAttributeChangedSignal(stateAttribute()):Connect(function()
-		refreshCharacter(character)
+	table.insert(characterConnections, character:GetAttributeChangedSignal(stateAttribute()):Connect(function()
+		refreshState(character)
 	end))
-	table.insert(list, character.AncestryChanged:Connect(function()
-		if not character:IsDescendantOf(Workspace) then
-			untrackCharacter(character)
+	table.insert(characterConnections, character.DescendantAdded:Connect(function(descendant)
+		if descendant:GetAttribute(HANDLE_ATTRIBUTE) then
+			task.defer(hideServerHandle, descendant)
 		end
 	end))
-	refreshCharacter(character)
-end
-
-local function onPlayerRemoving(player: Player)
-	local list = playerConnections[player]
-	if list then
-		playerConnections[player] = nil
-		for _, connection in list do
-			connection:Disconnect()
+	for _, descendant in character:GetDescendants() do
+		if descendant:GetAttribute(HANDLE_ATTRIBUTE) then
+			hideServerHandle(descendant)
 		end
 	end
-	if player.Character then
-		untrackCharacter(player.Character)
-	end
-end
-
-local function onPlayerAdded(player: Player)
-	local list = {}
-	playerConnections[player] = list
-	if player.Character then
-		trackCharacter(player.Character)
-	end
-	table.insert(list, player.CharacterAdded:Connect(trackCharacter))
-	table.insert(list, player.CharacterRemoving:Connect(untrackCharacter))
+	refreshState(character)
 end
 
 local function isHeld(character: Model): boolean
@@ -404,7 +467,16 @@ function FlashlightController.start()
 	ContextActionService:BindAction(ACTION_NAME, onAction, true, table.unpack(Config.Flashlight.ToggleKeys))
 	ContextActionService:SetTitle(ACTION_NAME, Config.Flashlight.TouchButtonTitle)
 
-	onPlayerAdded(Players.LocalPlayer)
+	local player = Players.LocalPlayer
+	table.insert(connections, player.CharacterAdded:Connect(function(character)
+		watchCharacter(character)
+	end))
+	table.insert(connections, player.CharacterRemoving:Connect(function()
+		watchCharacter(nil)
+	end))
+	if player.Character then
+		watchCharacter(player.Character)
+	end
 end
 
 function FlashlightController.stop()
@@ -417,12 +489,7 @@ function FlashlightController.stop()
 		connection:Disconnect()
 	end
 	table.clear(connections)
-	for player in playerConnections do
-		onPlayerRemoving(player)
-	end
-	for character in characterConnections do
-		untrackCharacter(character)
-	end
+	watchCharacter(nil)
 	unbindRender()
 end
 
