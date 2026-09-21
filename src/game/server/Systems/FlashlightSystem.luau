@@ -198,9 +198,12 @@ local function cloneHandle(): (Instance?, BasePart?)
 		if handle:IsA("BasePart") then
 			handlePart = handle
 		elseif handle:IsA("Model") then
+			local authored = handle:FindFirstChildWhichIsA("Motor6D", true)
+			local jointed = if authored then authored.Part1 else nil
 			local named = handle:FindFirstChild(Config.Flashlight.HandleName, true)
-			handlePart = handle.PrimaryPart
+			handlePart = (if jointed and jointed:IsDescendantOf(handle) then jointed else nil)
 				or (if named and named:IsA("BasePart") then named else nil)
+				or handle.PrimaryPart
 				or handle:FindFirstChildWhichIsA("BasePart", true)
 		end
 		if handlePart then
