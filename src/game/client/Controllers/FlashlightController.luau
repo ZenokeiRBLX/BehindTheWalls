@@ -16,14 +16,22 @@ local ACTION_NAME = "ToggleFlashlight"
 local RENDER_BIND = "FlashlightView"
 local RAGDOLL_ATTRIBUTE = "Ragdolled"
 local HANDLE_ATTRIBUTE = "FlashlightHandle"
+local HOLD_TIME_ATTRIBUTE = "FlashlightHoldTime"
+local EQUIP_ID_ATTRIBUTE = "FlashlightEquipId"
 local STATE_ON = "On"
 local STATE_EQUIPPING = "Equipping"
 
 type View = {
 	item: BasePart?,
 	node: BasePart?,
-	offset: Vector3Value?,
-	hiding: boolean,
+	hitLight: PointLight?,
+	hitPart: BasePart?,
+	aim: CFrame?,
+}
+
+type ArmJoint = {
+	target: Instance,
+	original: CFrame,
 }
 
 local isStarted = false
@@ -31,9 +39,16 @@ local connections: { RBXScriptConnection } = {}
 local characterConnections: { RBXScriptConnection } = {}
 local hiddenHandleParts: { BasePart } = {}
 local view: View? = nil
+local armJoints: { ArmJoint } = {}
+local playerConnections: { [Player]: { RBXScriptConnection } } = {}
+local heldCharacters: { [Model]: { RBXScriptConnection } } = {}
+local snapTokens: { [Model]: number } = {}
 local lastPress = 0
 local renderBound = false
 local warned: { [string]: boolean } = {}
+local castParams = RaycastParams.new()
+castParams.FilterType = Enum.RaycastFilterType.Exclude
+castParams.RespectCanCollide = true
 
 local function warnOnce(key: string, message: string)
 	if warned[key] then
@@ -49,6 +64,14 @@ end
 
 local function toVector(values: { number }): Vector3
 	return Vector3.new(values[1] or 0, values[2] or 0, values[3] or 0)
+end
+
+local function toAngles(values: { number }): CFrame
+	return CFrame.Angles(math.rad(values[1] or 0), math.rad(values[2] or 0), math.rad(values[3] or 0))
+end
+
+local function damp(current: CFrame, target: CFrame, speed: number, dt: number): CFrame
+	return current:Lerp(target, 1 - math.exp(-speed * dt))
 end
 
 local function isAssetFolder(instance: Instance): boolean
@@ -94,21 +117,53 @@ local function findClientPart(name: string): BasePart?
 	return nil
 end
 
-local function prepareLocalPart(part: BasePart)
-	part.Anchored = true
+local function prepareLocalPart(part: BasePart, anchored: boolean, invisible: boolean)
+	part.Anchored = anchored
 	part.CanCollide = false
 	part.CanQuery = false
 	part.CanTouch = false
 	part.Massless = true
+	part.CastShadow = false
+	if invisible then
+		part.Transparency = 1
+	end
 	for _, descendant in part:GetDescendants() do
 		if descendant:IsA("BasePart") then
-			descendant.Anchored = true
+			descendant.Anchored = anchored
 			descendant.CanCollide = false
 			descendant.CanQuery = false
 			descendant.CanTouch = false
+			descendant.Massless = true
+			descendant.CastShadow = false
+			if invisible then
+				descendant.Transparency = 1
+			end
+		elseif invisible and (descendant:IsA("Decal") or descendant:IsA("Texture")) then
+			descendant.Transparency = 1
 		end
 	end
 end
+
+local function scaleItem(item: BasePart, scale: number)
+	if scale <= 0 or math.abs(scale - 1) < 0.001 then
+		return
+	end
+	local origin = item.CFrame
+	item.Size *= scale
+	for _, descendant in item:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			local offset = origin:ToObjectSpace(descendant.CFrame)
+			descendant.Size *= scale
+			descendant.CFrame = origin * CFrame.new(offset.Position * scale) * (offset - offset.Position)
+		elseif descendant:IsA("Attachment") then
+			descendant.CFrame = CFrame.new(descendant.CFrame.Position * scale) * (descendant.CFrame - descendant.CFrame.Position)
+		elseif descendant:IsA("Weld") or descendant:IsA("Motor6D") then
+			descendant.C0 = CFrame.new(descendant.C0.Position * scale) * (descendant.C0 - descendant.C0.Position)
+			descendant.C1 = CFrame.new(descendant.C1.Position * scale) * (descendant.C1 - descendant.C1.Position)
+		end
+	end
+end
+
 
 local function buildFallbackNode(): BasePart
 	local node = Instance.new("Part")
@@ -196,7 +251,119 @@ local function unbindRender()
 	end)
 end
 
-local function updateView()
+local function handAnchor(): BasePart?
+	local character = Players.LocalPlayer.Character
+	if not character then
+		return nil
+	end
+	local hand = character:FindFirstChild(Config.Flashlight.HandName)
+	if not hand or not hand:IsA("BasePart") then
+		return nil
+	end
+	local grip = hand:FindFirstChild(Config.Flashlight.GripName)
+	if grip and grip:IsA("Motor6D") and grip.Part1 then
+		return grip.Part1
+	end
+	return hand
+end
+
+local function buildHitLight(): (BasePart, PointLight)
+	local settings = Config.Flashlight.Local.HitLight
+	local part = Instance.new("Part")
+	part.Name = "FlashlightHit"
+	part.Size = Vector3.new(0.2, 0.2, 0.2)
+	part.Transparency = 1
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.CastShadow = false
+	local light = Instance.new("PointLight")
+	light.Name = "Light"
+	light.Range = settings.Range
+	light.Brightness = settings.Brightness
+	light.Color = settings.Color
+	light.Shadows = false
+	light.Enabled = false
+	light.Parent = part
+	return part, light
+end
+
+local function applyShadowSetting(root: Instance)
+	local shadows = Config.Flashlight.Local.LightShadows
+	for _, descendant in root:GetDescendants() do
+		if descendant:IsA("Light") then
+			descendant.Shadows = shadows
+		end
+	end
+end
+
+local function clampPitch(direction: Vector3, fallback: Vector3): Vector3
+	local settings = Config.Flashlight.Local
+	local flat = Vector3.new(direction.X, 0, direction.Z)
+	if flat.Magnitude < 0.001 then
+		flat = Vector3.new(fallback.X, 0, fallback.Z)
+		if flat.Magnitude < 0.001 then
+			flat = -Vector3.zAxis
+		end
+	end
+	flat = flat.Unit
+	local pitch = math.asin(math.clamp(direction.Y, -1, 1))
+	pitch = math.clamp(pitch, math.rad(settings.PitchMinDegrees), math.rad(settings.PitchMaxDegrees))
+	return flat * math.cos(pitch) + Vector3.yAxis * math.sin(pitch)
+end
+
+local function aimPoint(camera: Camera): (Vector3, RaycastResult?)
+	local distance = Config.Flashlight.Local.AimDistance
+	local origin = camera.CFrame.Position
+	local direction = camera.CFrame.LookVector * distance
+	local hit = Workspace:Raycast(origin, direction, castParams)
+	return (if hit then hit.Position else origin + direction), hit
+end
+
+local function aimedFrames(camera: Camera, anchor: BasePart?): (CFrame, CFrame, RaycastResult?)
+	local origin = if anchor then anchor.Position else camera.CFrame.Position
+	local target, hit = aimPoint(camera)
+	local direction = target - origin
+	if direction.Magnitude < 0.01 then
+		direction = camera.CFrame.LookVector
+	end
+	direction = direction.Unit
+	local lightFrame = CFrame.lookAt(origin, origin + direction)
+	local clamped = clampPitch(direction, camera.CFrame.LookVector)
+	local itemAim = CFrame.lookAt(origin, origin + clamped)
+	return itemAim, lightFrame, hit
+end
+
+local function itemFrame(aim: CFrame): CFrame
+	local settings = Config.Flashlight.Local
+	return aim * CFrame.new(toVector(settings.ItemOffset)) * toAngles(settings.ItemRotationDegrees)
+end
+
+local function updateHitLight(current: View, hit: RaycastResult?)
+	local light = current.hitLight
+	local part = current.hitPart
+	if not light or not part then
+		return
+	end
+	local settings = Config.Flashlight.Local.HitLight
+	if not hit or not settings.Enabled then
+		light.Enabled = false
+		return
+	end
+	local camera = Workspace.CurrentCamera
+	local distance = if camera then (hit.Position - camera.CFrame.Position).Magnitude else 0
+	local fade = 1 - math.clamp((distance - settings.FadeStart) / math.max(settings.FadeEnd - settings.FadeStart, 0.001), 0, 1)
+	if fade <= 0.001 then
+		light.Enabled = false
+		return
+	end
+	part.CFrame = CFrame.new(hit.Position + hit.Normal * settings.SurfaceOffset)
+	light.Brightness = settings.Brightness * fade
+	light.Enabled = true
+end
+
+local function updateView(dt: number)
 	for _, part in hiddenHandleParts do
 		part.LocalTransparencyModifier = 1
 	end
@@ -206,16 +373,23 @@ local function updateView()
 		return
 	end
 	local settings = Config.Flashlight.Local
+	local anchor = handAnchor()
+	local itemTarget, lightFrame, hit = aimedFrames(camera, anchor)
+	local aim = if current.aim and settings.AimSmoothing > 0
+		then damp(current.aim, itemTarget, settings.AimSmoothing, math.min(dt, 0.1))
+		else itemTarget
+	current.aim = aim
+
 	local item = current.item
 	if item and item.Parent then
-		local offset = if current.offset then current.offset.Value else toVector(settings.ShownOffset)
-		item.CFrame = camera.CFrame * CFrame.new(offset)
+		item.CFrame = itemFrame(aim)
 	end
 	local node = current.node
 	if node and node.Parent then
-		local target = camera.CFrame * CFrame.new(toVector(settings.NodeOffset))
-		TweenService:Create(node, TweenInfo.new(settings.NodeTweenSeconds, Enum.EasingStyle.Back), { CFrame = target }):Play()
+		local lensOffset = toVector(settings.NodeOffset)
+		node.CFrame = lightFrame * CFrame.new(lensOffset)
 	end
+	updateHitLight(current, hit)
 end
 
 local function bindRender()
@@ -223,7 +397,7 @@ local function bindRender()
 		return
 	end
 	renderBound = true
-	RunService:BindToRenderStep(RENDER_BIND, Enum.RenderPriority.Camera.Value + 2, updateView)
+	RunService:BindToRenderStep(RENDER_BIND, Enum.RenderPriority.Last.Value, updateView)
 end
 
 local function releaseRenderIfIdle()
@@ -232,62 +406,182 @@ local function releaseRenderIfIdle()
 	end
 end
 
+local function restoreArms()
+	for _, joint in armJoints do
+		local target = joint.target
+		if target:IsA("Motor6D") then
+			target.C0 = joint.original
+		elseif target:IsA("Attachment") then
+			target.CFrame = joint.original
+		end
+	end
+	table.clear(armJoints)
+end
+
+local function offsetArms(character: Model)
+	restoreArms()
+	local settings = Config.Flashlight.Local
+	local offset = CFrame.new(toVector(settings.ArmOffset))
+	for _, name in settings.ArmJointNames do
+		local joint = character:FindFirstChild(name, true)
+		if joint and joint:IsA("Motor6D") then
+			table.insert(armJoints, { target = joint, original = joint.C0 })
+			joint.C0 = joint.C0 * offset
+		elseif joint and joint:IsA("AnimationConstraint") then
+			local attachment = joint.Attachment0
+			if attachment then
+				table.insert(armJoints, { target = attachment, original = attachment.CFrame })
+				attachment.CFrame = attachment.CFrame * offset
+			end
+		end
+	end
+end
+
+local function findEquipTrack(character: Model): AnimationTrack?
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local animator = if humanoid then humanoid:FindFirstChildOfClass("Animator") else nil
+	if not animator then
+		return nil
+	end
+	local wantedId = character:GetAttribute(EQUIP_ID_ATTRIBUTE)
+	for _, track in animator:GetPlayingAnimationTracks() do
+		local animation = track.Animation
+		if animation and (wantedId == nil or animation.AnimationId == wantedId) then
+			if wantedId ~= nil or track.Priority == Config.Flashlight.Animations.Priority then
+				return track
+			end
+		end
+	end
+	return nil
+end
+
+local function snapHold(character: Model)
+	local token = (snapTokens[character] or 0) + 1
+	snapTokens[character] = token
+	task.spawn(function()
+		local deadline = os.clock() + Config.Flashlight.Animations.HoldSnapTimeout
+		while snapTokens[character] == token and os.clock() < deadline do
+			if character:GetAttribute(stateAttribute()) ~= STATE_ON then
+				return
+			end
+			local holdTime = character:GetAttribute(HOLD_TIME_ATTRIBUTE)
+			local track = findEquipTrack(character)
+			if track and typeof(holdTime) == "number" then
+				track:AdjustSpeed(0)
+				track.TimePosition = holdTime
+				return
+			end
+			task.wait(0.05)
+		end
+	end)
+end
+
+local function unholdCharacter(character: Model)
+	local list = heldCharacters[character]
+	if list then
+		heldCharacters[character] = nil
+		for _, connection in list do
+			connection:Disconnect()
+		end
+	end
+	snapTokens[character] = nil
+end
+
+local function holdCharacter(character: Model)
+	if heldCharacters[character] then
+		return
+	end
+	local list = {}
+	heldCharacters[character] = list
+	local function refresh()
+		if character:GetAttribute(stateAttribute()) == STATE_ON then
+			snapHold(character)
+		else
+			snapTokens[character] = (snapTokens[character] or 0) + 1
+		end
+	end
+	table.insert(list, character:GetAttributeChangedSignal(stateAttribute()):Connect(refresh))
+	table.insert(list, character:GetAttributeChangedSignal(HOLD_TIME_ATTRIBUTE):Connect(refresh))
+	table.insert(list, character.AncestryChanged:Connect(function()
+		if not character:IsDescendantOf(Workspace) then
+			unholdCharacter(character)
+		end
+	end))
+	refresh()
+end
+
+local function onPlayerRemoving(player: Player)
+	local list = playerConnections[player]
+	if list then
+		playerConnections[player] = nil
+		for _, connection in list do
+			connection:Disconnect()
+		end
+	end
+	if player.Character then
+		unholdCharacter(player.Character)
+	end
+end
+
+local function onPlayerAdded(player: Player)
+	local list = {}
+	playerConnections[player] = list
+	table.insert(list, player.CharacterAdded:Connect(holdCharacter))
+	table.insert(list, player.CharacterRemoving:Connect(unholdCharacter))
+	if player.Character then
+		holdCharacter(player.Character)
+	end
+end
+
 local function showView()
 	if view then
-		if view.hiding then
-			local stale = view
-			view = nil
-			if stale.item then
-				stale.item:Destroy()
-			end
-			if stale.node then
-				stale.node:Destroy()
-			end
-		else
-			return
-		end
+		return
 	end
 	local camera = Workspace.CurrentCamera
 	if not camera then
 		return
 	end
 	local settings = Config.Flashlight.Local
+	local character = Players.LocalPlayer.Character
+	castParams.FilterDescendantsInstances = if character then { character, camera } else { camera }
 
 	local itemTemplate = findClientPart(settings.ItemName)
 	local nodeTemplate = findClientPart(settings.NodeName)
 	local item = if itemTemplate then itemTemplate:Clone() else nil
 	local node = if nodeTemplate then nodeTemplate:Clone() else buildFallbackNode()
 
-	local offset: Vector3Value? = nil
+	local anchor = handAnchor()
+	local aim, lightFrame, hit = aimedFrames(camera, anchor)
 	if item then
-		prepareLocalPart(item)
-		local found = item:FindFirstChild(settings.OffsetValueName)
-		if found and found:IsA("Vector3Value") then
-			offset = found
-		else
-			offset = Instance.new("Vector3Value")
-			offset.Name = settings.OffsetValueName
-			offset.Parent = item
-		end
-		offset.Value = toVector(settings.HiddenOffset)
-		item.CFrame = camera.CFrame * CFrame.new(offset.Value)
+		prepareLocalPart(item, true, false)
+		scaleItem(item, settings.ItemScale)
+		item.CFrame = itemFrame(aim)
 		item.Parent = camera
 	end
 
-	prepareLocalPart(node)
-	node.CFrame = camera.CFrame * CFrame.new(toVector(settings.NodeOffset))
+	prepareLocalPart(node, true, true)
+	applyShadowSetting(node)
+	node.CFrame = lightFrame * CFrame.new(toVector(settings.NodeOffset))
 	node.Parent = camera
 
-	view = {
+	local hitPart, hitLight = buildHitLight()
+	hitPart.Parent = camera
+
+	local current: View = {
 		item = item,
 		node = node,
-		offset = offset,
-		hiding = false,
+		hitLight = hitLight,
+		hitPart = hitPart,
+		aim = aim,
 	}
+	view = current
+	updateHitLight(current, hit)
 	bindRender()
+	if character then
+		offsetArms(character)
+	end
 
-	if item and offset then
-		TweenService:Create(offset, TweenInfo.new(settings.ShowSeconds, Enum.EasingStyle.Back), { Value = toVector(settings.ShownOffset) }):Play()
+	if item then
 		setOnUi(item, true)
 		playItemSound(item)
 	end
@@ -297,46 +591,50 @@ end
 
 local function hideView()
 	local current = view
-	if not current or current.hiding then
+	if not current then
 		return
 	end
-	current.hiding = true
-	local settings = Config.Flashlight.Local
+	view = nil
 	tweenHud(false)
-
+	restoreArms()
 	if current.node then
 		current.node:Destroy()
-		current.node = nil
 	end
-
+	if current.hitPart then
+		current.hitPart:Destroy()
+	end
 	local item = current.item
-	local function finish()
-		if view == current then
-			view = nil
-		end
-		if item then
-			item:Destroy()
-		end
-		releaseRenderIfIdle()
-	end
-
-	if item and item.Parent then
+	if item then
 		setOnUi(item, false)
 		playItemSound(item)
-		local offset = current.offset
-		if offset then
-			local tween = TweenService:Create(offset, TweenInfo.new(settings.HideSeconds), { Value = toVector(settings.HiddenOffset) })
-			tween.Completed:Once(finish)
-			tween:Play()
-			return
+		local sound = item:FindFirstChild(Config.Flashlight.Local.SoundName, true)
+		if sound and sound:IsA("Sound") and sound.IsPlaying then
+			item.Transparency = 1
+			setEnabled(item, false)
+			for _, descendant in item:GetDescendants() do
+				if descendant:IsA("BasePart") then
+					descendant.Transparency = 1
+				end
+			end
+			sound.Ended:Once(function()
+				item:Destroy()
+			end)
+			task.delay(Config.Flashlight.Audio.ClickLifetime, function()
+				if item.Parent then
+					item:Destroy()
+				end
+			end)
+		else
+			item:Destroy()
 		end
 	end
-	finish()
+	releaseRenderIfIdle()
 end
 
 local function hideHandlePart(part: Instance)
 	if part:IsA("BasePart") then
 		part.LocalTransparencyModifier = 1
+		part.CastShadow = false
 		if not table.find(hiddenHandleParts, part) then
 			table.insert(hiddenHandleParts, part)
 		end
@@ -389,6 +687,7 @@ local function watchCharacter(character: Model?)
 	table.clear(characterConnections)
 	table.clear(hiddenHandleParts)
 	hideView()
+	table.clear(armJoints)
 	if not character then
 		releaseRenderIfIdle()
 		return
@@ -477,6 +776,11 @@ function FlashlightController.start()
 	if player.Character then
 		watchCharacter(player.Character)
 	end
+	for _, other in Players:GetPlayers() do
+		onPlayerAdded(other)
+	end
+	table.insert(connections, Players.PlayerAdded:Connect(onPlayerAdded))
+	table.insert(connections, Players.PlayerRemoving:Connect(onPlayerRemoving))
 end
 
 function FlashlightController.stop()
@@ -490,6 +794,12 @@ function FlashlightController.stop()
 	end
 	table.clear(connections)
 	watchCharacter(nil)
+	for player in playerConnections do
+		onPlayerRemoving(player)
+	end
+	for character in heldCharacters do
+		unholdCharacter(character)
+	end
 	unbindRender()
 end
 

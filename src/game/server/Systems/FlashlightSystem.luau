@@ -12,6 +12,8 @@ local FlashlightSystem = {}
 local ASSETS_WAIT = 30
 local RAGDOLL_ATTRIBUTE = "Ragdolled"
 local HANDLE_ATTRIBUTE = "FlashlightHandle"
+local HOLD_TIME_ATTRIBUTE = "FlashlightHoldTime"
+local EQUIP_ID_ATTRIBUTE = "FlashlightEquipId"
 local GRIP_ATTACHMENT_SUFFIX = "GripAttachment$"
 local STATE_EQUIPPING = "Equipping"
 local STATE_ON = "On"
@@ -332,6 +334,9 @@ local function hold(session: Session)
 	local track = session.equipTrack
 	if track then
 		track:AdjustSpeed(0)
+		if session.character.Parent then
+			session.character:SetAttribute(HOLD_TIME_ATTRIBUTE, track.TimePosition)
+		end
 	end
 	setHandleLights(session.handle, true)
 	setState(session, STATE_ON)
@@ -347,8 +352,11 @@ local function playEquip(session: Session)
 	end
 	local track = getAnimator(session.humanoid):LoadAnimation(animation)
 	track.Priority = settings.Priority
-	track.Looped = false
+	track.Looped = true
 	session.equipTrack = track
+	if session.character.Parent then
+		session.character:SetAttribute(EQUIP_ID_ATTRIBUTE, animation.AnimationId)
+	end
 
 	table.insert(session.connections, track:GetMarkerReachedSignal(settings.HoldMarker):Connect(function()
 		hold(session)
@@ -359,7 +367,7 @@ local function playEquip(session: Session)
 		end
 		track:Play(0)
 		track:AdjustSpeed(0)
-		track.TimePosition = math.max(track.Length - settings.HoldMargin, 0)
+		track.TimePosition = math.max(track.Length * settings.HoldFraction - settings.HoldMargin, 0)
 		hold(session)
 	end))
 	track:Play(settings.FadeSeconds)
@@ -372,11 +380,15 @@ local function playEquip(session: Session)
 		if session.closing or session.held or not track.IsPlaying then
 			return
 		end
-		local remaining = math.max(track.Length - track.TimePosition - settings.HoldMargin, 0)
+		local holdTime = math.max(track.Length * math.clamp(settings.HoldFraction, 0, 1) - settings.HoldMargin, 0)
+		local remaining = math.max((holdTime - track.TimePosition) / math.max(track.Speed, 0.01), 0)
 		task.wait(remaining)
-		if not session.closing and not session.held and track.IsPlaying then
-			hold(session)
+		if session.closing or session.held or not track.IsPlaying then
+			return
 		end
+		track:AdjustSpeed(0)
+		track.TimePosition = holdTime
+		hold(session)
 	end)
 end
 
@@ -421,6 +433,10 @@ local function endSession(player: Player, animate: boolean)
 		end
 	end
 	session.handle:Destroy()
+	if session.character.Parent then
+		session.character:SetAttribute(HOLD_TIME_ATTRIBUTE, nil)
+		session.character:SetAttribute(EQUIP_ID_ATTRIBUTE, nil)
+	end
 	if animate and session.character.Parent then
 		setState(session, STATE_UNEQUIPPING)
 		if wasOn then
