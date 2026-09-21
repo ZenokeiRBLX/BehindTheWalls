@@ -10,6 +10,7 @@ local FirstPersonCameraController = {}
 
 local CAMERA_BIND = "FirstPersonCamera"
 local RAGDOLL_ATTRIBUTE = "Ragdolled"
+local VISIBLE_ATTRIBUTE = "FirstPersonVisible"
 local MAX_DELTA_TIME = 0.1
 local SPRING_STEP = 1 / 120
 local EPSILON = 0.001
@@ -87,6 +88,9 @@ end
 local function isVisiblePart(part: BasePart): boolean
 	if part:FindFirstAncestorOfClass("Accessory") then
 		return false
+	end
+	if part:GetAttribute(VISIBLE_ATTRIBUTE) == true then
+		return true
 	end
 	return table.find(Config.Camera.VisibleParts, part.Name) ~= nil
 end

@@ -306,6 +306,13 @@ function SerdesFunctions.ReadEVENT_CutsceneSkipState(): ({ votes: number, total:
 	return Value
 end
 
+function SerdesFunctions.WriteEVENT_FlashlightToggle(Value: boolean): ()
+	-- Allocate BLOCK: 2 bytes
+	local BLOCK_START = Allocate(2)
+	buffer.writeu8(SendBuffer, BLOCK_START + 0, 14)
+	buffer.writeu8(SendBuffer, BLOCK_START + 1, Value and 1 or 0)
+end
+
 if not RunService:IsRunning() then
 	local NOOP = function() end
 	local Returns = table.freeze({
@@ -350,6 +357,9 @@ if not RunService:IsRunning() then
 	},
 	CutsceneSkipState = {
 		On = NOOP
+	},
+	FlashlightToggle = {
+		Fire = NOOP
 	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
@@ -600,6 +610,11 @@ local Returns = table.freeze({
 					Events.Reliable[13] = nil
 				end
 			end
+		end
+	},
+	FlashlightToggle = {
+		Fire = function(Value: boolean): ()
+			SerdesFunctions.WriteEVENT_FlashlightToggle(Value)
 		end
 	},
 })

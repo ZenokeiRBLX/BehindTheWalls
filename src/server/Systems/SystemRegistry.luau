@@ -22,6 +22,7 @@ local function gameSystems(): { System }
 		DataSystem,
 		require(Game:WaitForChild("MatchSystem")),
 		require(Game:WaitForChild("GameSpawnSystem")),
+		require(Game:WaitForChild("FlashlightSystem")),
 	}
 end
 

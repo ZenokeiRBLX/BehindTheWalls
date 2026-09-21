@@ -191,4 +191,57 @@ Config.Camera = {
 	SuspendAttributes = { "UnderBed", "InCloset" },
 }
 
+Config.Flashlight = {
+	AssetFolder = "Flashlight",
+	ServerFolder = "Server",
+	ClientFolder = "Client",
+	ItemName = "Flashlight",
+	HandleName = "Handle",
+	NodeName = "FlashNode",
+	HandName = "RightHand",
+	GripName = "FlashlightGrip",
+	StateAttribute = "FlashlightState",
+	ToggleKeys = { Enum.KeyCode.F, Enum.KeyCode.ButtonY },
+	TouchButtonTitle = "Light",
+	ToggleCooldown = 0.35,
+	Animations = {
+		EquipName = "Flashlight_Equip",
+		UnequipName = "Item_Unequip",
+		EquipId = "",
+		UnequipId = "",
+		Priority = Enum.AnimationPriority.Action2,
+		HoldMarker = "Fire",
+		HoldMargin = 0.05,
+		LoadTimeout = 5,
+		FadeSeconds = 0.15,
+		UnequipSpeed = 2,
+	},
+	Grip = {
+		Position = { 0, 0, 0 },
+		RotationDegrees = { 0, 0, 0 },
+	},
+	Handle = {
+		Size = { 0.35, 0.35, 1.2 },
+		Color = Color3.fromRGB(40, 40, 44),
+		Material = Enum.Material.Metal,
+	},
+	Light = {
+		Angle = 55,
+		Range = 60,
+		Brightness = 2.5,
+		Color = Color3.fromRGB(255, 244, 214),
+		Shadows = true,
+	},
+	Local = {
+		Offset = { 0.35, -0.3, 0 },
+		Smoothing = 14,
+	},
+	Audio = {
+		ClickName = "Flashlight_Click",
+		AssetClickName = "ON",
+		ClickVolumeScale = 1,
+		ClickLifetime = 3,
+	},
+}
+
 return Config

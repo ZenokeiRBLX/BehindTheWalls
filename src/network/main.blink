@@ -122,3 +122,10 @@ event CutsceneSkipState {
     Call: SingleAsync,
     Data: CutsceneSkipData
 }
+
+event FlashlightToggle {
+    From: Client,
+    Type: Reliable,
+    Call: SingleAsync,
+    Data: boolean
+}

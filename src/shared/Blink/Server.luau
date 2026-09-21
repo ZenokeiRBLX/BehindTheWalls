@@ -169,6 +169,7 @@ Queue.Reliable[8] = table.create(256)
 Queue.Reliable[9] = table.create(256)
 Queue.Reliable[11] = table.create(256)
 Queue.Reliable[12] = table.create(256)
+Queue.Reliable[14] = table.create(256)
 export type Difficulty = ("Easy" | "Normal" | "Hard")
 export type PartySettings = { maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean }
 export type PartyStateData = { active: boolean, isHost: boolean, portalId: number, maxSize: number, difficulty: ("Easy" | "Normal" | "Hard"), friendsOnly: boolean, countdown: number, members: { string } }
@@ -298,6 +299,13 @@ function SerdesFunctions.WriteEVENT_CutsceneSkipState(Value: { votes: number, to
 	buffer.writeu8(SendBuffer, BLOCK_START + 3, Value.complete and 1 or 0)
 end
 
+function SerdesFunctions.ReadEVENT_FlashlightToggle(): (boolean)
+	-- Read BLOCK: 1 bytes
+	local BLOCK_START = Read(1)
+	local Value = (buffer.readu8(RecieveBuffer, BLOCK_START + 0) == 1)
+	return Value
+end
+
 if not RunService:IsRunning() then
 	local NOOP = function() end
 	local Returns = table.freeze({
@@ -360,6 +368,9 @@ if not RunService:IsRunning() then
 		FireAll = NOOP,
 		FireList = NOOP,
 		FireExcept = NOOP
+	},
+	FlashlightToggle = {
+		On = NOOP
 	},
 	})
 	return Returns :: BLINK_EVENTS_SYMBOL
@@ -502,6 +513,16 @@ Reliable.OnServerEvent:Connect(function(Player: Player, Buffer: buffer, Instance
 					warn("[Blink]: Event queue of \"CutsceneSkipVote\" exceeded 256, did you forget to implement a listener?")
 				end
 				table.insert(Queue.Reliable[12], {Player, Value} :: {any})
+			end
+		elseif Index == 14 then
+			local Value: boolean = SerdesFunctions.ReadEVENT_FlashlightToggle()
+			if Events.Reliable[14] ~= nil then
+				task.spawn(Events.Reliable[14], Player, Value)
+			else
+				if #Queue.Reliable[14] > 256 then
+					warn("[Blink]: Event queue of \"FlashlightToggle\" exceeded 256, did you forget to implement a listener?")
+				end
+				table.insert(Queue.Reliable[14], {Player, Value} :: {any})
 			end
 		end
 	end
@@ -915,6 +936,20 @@ local Returns = table.freeze({
 				PlayersMap[Player] = Save()
 			end
 		end,
+	},
+	FlashlightToggle = {
+		On = function(Listener: (Player: Player, Value: boolean) -> ()): () -> ()
+			Events.Reliable[14] = Listener
+			for Index, Arguments in Queue.Reliable[14] do
+				task.spawn(Listener, table.unpack(Arguments))
+			end
+			Queue.Reliable[14] = {}
+			return function (): ()
+				if Events.Reliable[14] == Listener then
+					Events.Reliable[14] = nil
+				end
+			end
+		end
 	},
 })
 type BLINK_EVENTS_SYMBOL = typeof(Returns)

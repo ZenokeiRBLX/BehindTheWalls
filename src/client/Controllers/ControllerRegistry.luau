@@ -27,6 +27,7 @@ local function gameControllers(): { Controller }
 		require(Controllers:WaitForChild("TeleportHudController")),
 		require(Game:WaitForChild("FirstPersonCameraController")),
 		require(Game:WaitForChild("CutsceneController")),
+		require(Game:WaitForChild("FlashlightController")),
 	}
 end
 

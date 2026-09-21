@@ -1,5 +1,7 @@
 # Signal Maze
 
+This describes the original compact build. The current Studio map has been expanded; see [EXPANSION.md](EXPANSION.md) for its dimensions, lighting, and verification results.
+
 Built in the Studio place `Map Creation` (`126262358232325`) as `Workspace.SignalMaze`.
 
 The map occupies approximately 112 x 112 studs around `(147, 0, 54)`. Start at `MazeEntrance`: the TV corridor opens into a signal court, with west and east side chambers, a northern loop, a receiver chamber, and a blind alcove. The receiver is a visual destination; it has no scripted objective or exit behavior.
