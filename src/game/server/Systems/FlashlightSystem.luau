@@ -266,11 +266,12 @@ end
 local function attachHandle(hand: BasePart, handle: Instance, handlePart: BasePart)
 	local authored = handle:FindFirstChildWhichIsA("Motor6D", true)
 	local motor: Motor6D
-	if authored and (authored.Part1 == nil or authored.Part1 == handlePart) then
+	if authored then
 		motor = authored
 		motor.Name = Config.Flashlight.GripName
 		motor.Part0 = hand
 		motor.Part1 = handlePart
+		motor.C1 = motor.C1 * gripOffset()
 	else
 		motor = Instance.new("Motor6D")
 		motor.Name = Config.Flashlight.GripName
@@ -279,7 +280,7 @@ local function attachHandle(hand: BasePart, handle: Instance, handlePart: BasePa
 		local grip = findGripAttachment(hand)
 		motor.C0 = if grip then grip.CFrame else CFrame.identity
 		local handleGrip = findGripAttachment(handlePart)
-		motor.C1 = if handleGrip then handleGrip.CFrame else gripOffset()
+		motor.C1 = (if handleGrip then handleGrip.CFrame else CFrame.identity) * gripOffset()
 	end
 	local target = hand.CFrame * motor.C0 * motor.C1:Inverse()
 	if handle:IsA("Model") then

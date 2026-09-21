@@ -234,6 +234,7 @@ Config.Flashlight = {
 	},
 	Local = {
 		Offset = { 0.35, -0.3, 0 },
+		RotationDegrees = { 0, 0, 0 },
 		Smoothing = 14,
 	},
 	Audio = {

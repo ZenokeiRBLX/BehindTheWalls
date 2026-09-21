@@ -21,6 +21,7 @@ local MAX_DELTA_TIME = 0.1
 type Beam = {
 	character: Model,
 	node: BasePart,
+	alignment: CFrame,
 	view: CFrame?,
 	connections: { RBXScriptConnection },
 }
@@ -173,12 +174,43 @@ local function suppressHandleLights(beam: Beam)
 	end))
 end
 
-local function targetCFrame(): CFrame?
+local function beamDirection(node: BasePart): Vector3
+	local light = node:FindFirstChildWhichIsA("SpotLight", true) or node:FindFirstChildWhichIsA("SurfaceLight", true)
+	if not light then
+		return -Vector3.zAxis
+	end
+	local direction = Vector3.FromNormalId((light :: any).Face)
+	local holder = light.Parent
+	while holder and holder ~= node do
+		if holder:IsA("Attachment") then
+			direction = holder.CFrame:VectorToWorldSpace(direction)
+		elseif holder:IsA("BasePart") then
+			direction = node.CFrame:VectorToObjectSpace(holder.CFrame:VectorToWorldSpace(direction))
+			break
+		end
+		holder = holder.Parent
+	end
+	if direction.Magnitude < 0.001 then
+		return -Vector3.zAxis
+	end
+	return direction.Unit
+end
+
+local function beamAlignment(node: BasePart): CFrame
+	local direction = beamDirection(node)
+	local up = if math.abs(direction.Y) > 0.99 then Vector3.xAxis else Vector3.yAxis
+	local basis = CFrame.lookAt(Vector3.zero, direction, up)
+	local adjust = Config.Flashlight.Local.RotationDegrees
+	local rotation = CFrame.Angles(math.rad(adjust[1] or 0), math.rad(adjust[2] or 0), math.rad(adjust[3] or 0))
+	return rotation * basis:Inverse()
+end
+
+local function targetCFrame(beam: Beam): CFrame?
 	local camera = Workspace.CurrentCamera
 	if not camera then
 		return nil
 	end
-	return camera.CFrame * CFrame.new(toVector(Config.Flashlight.Local.Offset))
+	return camera.CFrame * CFrame.new(toVector(Config.Flashlight.Local.Offset)) * beam.alignment
 end
 
 local function unbindRender()
@@ -194,7 +226,7 @@ end
 local function updateBeams(dt: number)
 	dt = math.clamp(dt, 0, MAX_DELTA_TIME)
 	for _, beam in beams do
-		local target = targetCFrame()
+		local target = targetCFrame(beam)
 		if not target then
 			continue
 		end
@@ -233,14 +265,16 @@ local function addBeam(character: Model)
 	if beams[character] then
 		return
 	end
+	local node = buildNode()
 	local beam: Beam = {
 		character = character,
-		node = buildNode(),
+		node = node,
+		alignment = beamAlignment(node),
 		view = nil,
 		connections = {},
 	}
 	beams[character] = beam
-	local target = targetCFrame()
+	local target = targetCFrame(beam)
 	if target then
 		beam.view = target
 		beam.node.CFrame = target
