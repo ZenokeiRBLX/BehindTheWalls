@@ -444,6 +444,10 @@ function FirstPersonCameraController.isEnabled(): boolean
 	return enabled
 end
 
+function FirstPersonCameraController.isHudHidden(): boolean
+	return hudHidden
+end
+
 function FirstPersonCameraController.setHudHidden(hidden: boolean)
 	hudHidden = hidden
 	applyCrosshair()
