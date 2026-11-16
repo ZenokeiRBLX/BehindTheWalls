@@ -1,5 +1,7 @@
 # Signal maze mock map
 
+The current Map Creation build is version 7; see [SIZED-V7.md](SIZED-V7.md), which builds on [VARY-V6.md](VARY-V6.md), [POPULATE-V5.md](POPULATE-V5.md), [REFINE-V4.md](REFINE-V4.md) and [REBUILD-V3.md](REBUILD-V3.md). The notes below describe earlier builds.
+
 Built in the open **Map Creation** Roblox Studio place (`126262358232325`). The map is Studio-owned at `Workspace.TheSignalMaze`; save that place to retain the geometry and lighting. These files are reference assets, not a Rojo map export.
 
 - Footprint: 768 x 768 studs on the existing 800 x 800 baseplate.
