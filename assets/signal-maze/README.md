@@ -1,6 +1,6 @@
 # Signal maze mock map
 
-The current Map Creation build is version 7; see [SIZED-V7.md](SIZED-V7.md), which builds on [VARY-V6.md](VARY-V6.md), [POPULATE-V5.md](POPULATE-V5.md), [REFINE-V4.md](REFINE-V4.md) and [REBUILD-V3.md](REBUILD-V3.md). The notes below describe earlier builds.
+The current Map Creation build is version 8; see [MOOD-V8.md](MOOD-V8.md), which builds on [SIZED-V7.md](SIZED-V7.md), [VARY-V6.md](VARY-V6.md), [POPULATE-V5.md](POPULATE-V5.md), [REFINE-V4.md](REFINE-V4.md) and [REBUILD-V3.md](REBUILD-V3.md). The notes below describe earlier builds.
 
 Built in the open **Map Creation** Roblox Studio place (`126262358232325`). The map is Studio-owned at `Workspace.TheSignalMaze`; save that place to retain the geometry and lighting. These files are reference assets, not a Rojo map export.
 
@@ -16,4 +16,4 @@ Built in the open **Map Creation** Roblox Studio place (`126262358232325`). The 
 
 `entrance-preview.jpg` shows the final entrance. `layout-preview.jpg` shows the maze with the roof temporarily hidden. `playtest-preview.jpg` records the movement test before the final floor and housing color adjustments.
 
-The place remains on `LightingStyle.Soft`: Studio denied changing that property through MCP. Select `Lighting > LightingStyle > Realistic` manually for stronger specular lighting.
+The place now uses `LightingStyle.Realistic`, which was set manually in Studio because MCP cannot change that property. The version 8 look depends on its specular highlights.
