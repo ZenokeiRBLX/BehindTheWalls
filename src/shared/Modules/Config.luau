@@ -151,6 +151,8 @@ Config.IntroHole = {
 		ShakeSpeed = 7,
 		FadeStart = 1.75,
 		FadeSeconds = 0.5,
+		HoleLightScale = 0.12,
+		HoleLightRestoreDepth = 25,
 		ConfirmSeconds = 3,
 		ArrivalTimeout = 6,
 	},
