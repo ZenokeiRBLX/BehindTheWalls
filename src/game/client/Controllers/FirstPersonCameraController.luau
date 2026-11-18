@@ -348,9 +348,13 @@ local function update(dt: number)
 	end
 	stepSpring(impact, settings.Impact.Stiffness, settings.Impact.Damping, dt)
 
-	local moveRatio = if grounded then math.clamp(planarSpeed / walkSpeed, 0, 1.5) else 0
+	local sprintBob = settings.Bob.Sprint
+	local sprintBlend = math.clamp((planarSpeed - walkSpeed) / math.max(Config.Movement.SprintSpeed - walkSpeed, 1), 0, 1)
+	local bobScale = 1 + (sprintBob.Scale - 1) * sprintBlend
+	local stride = settings.Bob.StrideStuds + (sprintBob.StrideStuds - settings.Bob.StrideStuds) * sprintBlend
+	local moveRatio = if grounded then math.clamp(planarSpeed / walkSpeed, 0, 1) * bobScale else 0
 	bobWeight = damp(bobWeight, moveRatio, settings.Bob.Smoothing, dt)
-	bobPhase = (bobPhase + planarSpeed * dt * math.pi / math.max(settings.Bob.StrideStuds, 0.1)) % (TWO_PI * 2)
+	bobPhase = (bobPhase + planarSpeed * dt * math.pi / math.max(stride, 0.1)) % (TWO_PI * 2)
 	local bobOffset = Vector3.new(
 		math.cos(bobPhase) * settings.Bob.Sway * bobWeight,
 		(math.sin(bobPhase * 2) * settings.Bob.Height * bobWeight) + impact.position,
