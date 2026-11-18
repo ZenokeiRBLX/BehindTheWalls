@@ -797,7 +797,7 @@ local function landLevel(fall: Fall)
 	task.delay(settings.HudDelaySeconds, cleanup, fall)
 end
 
-local function enterCard(fall: Fall)
+local function enterCard(fall: Fall, holdSeconds: number, showCard: boolean)
 	local transit = fall.transit
 	if not transit or not fall.landing or fall.phase ~= PHASE_SEWER then
 		return
@@ -811,13 +811,13 @@ local function enterCard(fall: Fall)
 	fall.root.AssemblyAngularVelocity = Vector3.zero
 	fall.character:PivotTo(CFrame.new(transit.Position) * CFrame.Angles(0, fall.landingYaw, 0))
 	local distance = math.max(transit.Position.Y - releasePoint(fall).Y, 0)
-	fall.descentStart = os.clock() + settings.CardSeconds
+	fall.descentStart = os.clock() + holdSeconds
 	fall.descentDuration = 2 * distance / math.max(settings.StartSpeed + settings.EndSpeed, EPSILON)
 	local camera = Workspace.CurrentCamera
 	if camera then
 		camera.FieldOfView = settings.FieldOfView
 	end
-	if fall.level then
+	if showCard and fall.level then
 		LevelCardController.play(fall.level)
 	end
 end
@@ -976,7 +976,7 @@ local function stepFall()
 		end
 		local transit = fall.character:GetAttribute(settings.Level.TransitAttribute)
 		if fall.confirmed and (t >= settings.FallSeconds or typeof(transit) == "CFrame") then
-			enterCard(fall)
+			enterCard(fall, settings.Level.CardSeconds, true)
 			return
 		end
 		if fall.confirmed and not falling then
@@ -1000,7 +1000,7 @@ local function stepFall()
 	end
 end
 
-local function beginFall(character: Model, humanoid: Humanoid, root: BasePart, center: Vector3, confirmed: boolean)
+local function beginFall(character: Model, humanoid: Humanoid, root: BasePart, center: Vector3, confirmed: boolean, respawn: boolean?)
 	local camera = Workspace.CurrentCamera
 	local look = if camera then camera.CFrame.LookVector else root.CFrame.LookVector
 	local head = character:FindFirstChild("Head")
@@ -1057,12 +1057,17 @@ local function beginFall(character: Model, humanoid: Humanoid, root: BasePart, c
 	FirstPersonCameraController.disable()
 	setControls(false)
 	lockBody(fall)
-	local shaft = buildShaft(center)
-	fall.shaft = shaft
-	fall.dust = buildDust(shaft)
 	createFade(fall)
-	flare()
-	playFallAudio(fall)
+	if respawn and fall.transit then
+		setFade(fall, 1)
+		enterCard(fall, Config.IntroHole.Level.RespawnHoldSeconds, false)
+	else
+		local shaft = buildShaft(center)
+		fall.shaft = shaft
+		fall.dust = buildDust(shaft)
+		flare()
+		playFallAudio(fall)
+	end
 	table.insert(fall.connections, RunService.PreSimulation:Connect(stepBody))
 	table.insert(fall.connections, RunService.Heartbeat:Connect(stepFall))
 	table.insert(fall.connections, humanoid.Died:Connect(function()
@@ -1120,16 +1125,30 @@ local function onFallingChanged(character: Model)
 	if character:GetAttribute(Config.IntroHole.FallingAttribute) ~= true then
 		return
 	end
+	local respawn = typeof(character:GetAttribute(Config.IntroHole.Level.TransitAttribute)) == "CFrame"
 	if character == Players.LocalPlayer.Character then
 		if active then
 			return
 		end
 		local center = Workspace:GetAttribute(CENTER_ATTRIBUTE)
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		local root = if humanoid then humanoid.RootPart else nil
-		if typeof(center) == "Vector3" and humanoid and root and humanoid.Health > 0 then
-			beginFall(character, humanoid, root, center, true)
+		local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 5)
+		local root = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart", 5)
+		if active or character:GetAttribute(Config.IntroHole.FallingAttribute) ~= true then
+			return
 		end
+		if
+			typeof(center) == "Vector3"
+			and humanoid
+			and humanoid:IsA("Humanoid")
+			and root
+			and root:IsA("BasePart")
+			and humanoid.Health > 0
+		then
+			beginFall(character, humanoid, root, center, true, respawn)
+		end
+		return
+	end
+	if respawn then
 		return
 	end
 	flare()
@@ -1154,6 +1173,9 @@ local function watchCharacter(character: Model)
 	watched[character] = character:GetAttributeChangedSignal(Config.IntroHole.FallingAttribute):Connect(function()
 		onFallingChanged(character)
 	end)
+	if character:GetAttribute(Config.IntroHole.FallingAttribute) == true then
+		task.defer(onFallingChanged, character)
+	end
 end
 
 local function watchPlayer(player: Player)

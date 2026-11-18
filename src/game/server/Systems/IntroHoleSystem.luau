@@ -33,6 +33,7 @@ local isStarted = false
 local connections: { RBXScriptConnection } = {}
 local falls: { [Player]: Fall } = {}
 local cooldowns: { [Player]: number } = {}
+local respawnDrops: { [Player]: string } = {}
 local center: Vector3? = nil
 local pollElapsed = 0
 local warnedDestination = false
@@ -259,6 +260,16 @@ local function enterLevel(player: Player, fall: Fall)
 	task.delay(settings.CardSeconds + descentSeconds(transit, fall.target) + settings.FinalizeMargin, settle, player, fall)
 end
 
+local function claimBody(fall: Fall)
+	local character = fall.character
+	for _, descendant in character:GetDescendants() do
+		moveToFallGroup(fall, descendant)
+	end
+	fall.connection = character.DescendantAdded:Connect(function(descendant)
+		moveToFallGroup(fall, descendant)
+	end)
+end
+
 local function streamAround(player: Player, positions: { Vector3 })
 	task.spawn(function()
 		for _, position in positions do
@@ -284,18 +295,71 @@ local function beginFall(player: Player, character: Model, humanoid: Humanoid, r
 		connection = nil,
 	}
 	falls[player] = fall
-	for _, descendant in character:GetDescendants() do
-		moveToFallGroup(fall, descendant)
-	end
-	fall.connection = character.DescendantAdded:Connect(function(descendant)
-		moveToFallGroup(fall, descendant)
-	end)
+	claimBody(fall)
 	character:SetAttribute(settings.ArrivalAttribute, nil)
 	character:SetAttribute(settings.Level.TransitAttribute, nil)
 	character:SetAttribute(settings.FallingAttribute, true)
 	local transit = fall.transit
 	streamAround(player, if transit then { fall.target.Position, transit.Position } else { fall.target.Position })
 	task.delay(settings.FallSeconds, if transit then enterLevel else land, player, fall)
+end
+
+local function dropIntoLevel(player: Player, character: Model)
+	local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 10)
+	local root = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart", 10)
+	local level = MapSystem.getActive()
+	if not humanoid or not humanoid:IsA("Humanoid") or not root or not root:IsA("BasePart") or not level or not level.shaftTop then
+		return
+	end
+	task.wait()
+	if falls[player] or player.Character ~= character then
+		return
+	end
+	local settings = Config.IntroHole
+	local transit = level.shaftTop :: CFrame
+	local fall: Fall = {
+		character = character,
+		target = levelCFrame(level.entry, humanoid, root),
+		transit = transit,
+		level = level.key,
+		groups = {},
+		connection = nil,
+	}
+	falls[player] = fall
+	claimBody(fall)
+	MapSystem.setPlayerMap(player, level.key)
+	character:SetAttribute(settings.ArrivalAttribute, nil)
+	character:SetAttribute(settings.Level.TransitAttribute, transit)
+	character:SetAttribute(settings.FallingAttribute, true)
+	moveBody(fall, root, transit)
+	streamAround(player, { fall.target.Position, transit.Position })
+	local levelSettings = settings.Level
+	task.delay(levelSettings.RespawnHoldSeconds + descentSeconds(transit, fall.target) + levelSettings.FinalizeMargin, settle, player, fall)
+end
+
+local function watchRespawns(player: Player)
+	local function onCharacter(character: Model)
+		local key = respawnDrops[player]
+		respawnDrops[player] = nil
+		if key then
+			task.spawn(dropIntoLevel, player, character)
+		end
+		local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 10)
+		if not humanoid or not humanoid:IsA("Humanoid") then
+			return
+		end
+		humanoid.Died:Once(function()
+			local level = MapSystem.getActive()
+			if level and level.shaftTop and MapSystem.getPlayerMap(player) == level.key then
+				respawnDrops[player] = level.key
+				MapSystem.setRespawnMap(player, level.key)
+			end
+		end)
+	end
+	table.insert(connections, player.CharacterAdded:Connect(onCharacter))
+	if player.Character then
+		task.spawn(onCharacter, player.Character)
+	end
 end
 
 local function isInHole(root: BasePart, hole: Vector3): boolean
@@ -344,6 +408,7 @@ end
 local function onPlayerRemoving(player: Player)
 	endFall(player)
 	cooldowns[player] = nil
+	respawnDrops[player] = nil
 end
 
 function IntroHoleSystem.start()
@@ -363,6 +428,10 @@ function IntroHoleSystem.start()
 	end
 	table.insert(connections, RunService.Heartbeat:Connect(poll))
 	table.insert(connections, Players.PlayerRemoving:Connect(onPlayerRemoving))
+	table.insert(connections, Players.PlayerAdded:Connect(watchRespawns))
+	for _, player in Players:GetPlayers() do
+		watchRespawns(player)
+	end
 end
 
 function IntroHoleSystem.stop()

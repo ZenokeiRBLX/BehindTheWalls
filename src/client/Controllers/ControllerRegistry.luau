@@ -35,6 +35,7 @@ local function gameControllers(): { Controller }
 		require(Game:WaitForChild("LevelCardController")),
 		require(Game:WaitForChild("IntroHoleController")),
 		require(Game:WaitForChild("SignalMazeController")),
+		require(Game:WaitForChild("MonsterController")),
 	}
 end
 

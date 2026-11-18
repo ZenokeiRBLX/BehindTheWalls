@@ -25,6 +25,7 @@ local isStarted = false
 local connections: { RBXScriptConnection } = {}
 local levels: { [string]: Level } = {}
 local activeKey: string? = nil
+local respawnMaps: { [Player]: string } = {}
 
 local function settingsFor(key: string): LevelSettings?
 	return (Config.Maps.Levels :: any)[key]
@@ -201,9 +202,19 @@ function MapSystem.getPlayerMap(player: Player): string?
 	return if type(value) == "string" then value else nil
 end
 
+function MapSystem.setRespawnMap(player: Player, key: string?)
+	if key then
+		respawnMaps[player] = key
+	else
+		respawnMaps[player] = nil
+	end
+end
+
 local function watchPlayer(player: Player)
 	table.insert(connections, player.CharacterAdded:Connect(function()
-		MapSystem.setPlayerMap(player, nil)
+		local key = respawnMaps[player]
+		respawnMaps[player] = nil
+		MapSystem.setPlayerMap(player, key)
 	end))
 end
 
@@ -217,6 +228,9 @@ function MapSystem.start()
 		MapSystem.activate(key)
 	end
 	table.insert(connections, Players.PlayerAdded:Connect(watchPlayer))
+	table.insert(connections, Players.PlayerRemoving:Connect(function(player)
+		respawnMaps[player] = nil
+	end))
 	for _, player in Players:GetPlayers() do
 		watchPlayer(player)
 	end

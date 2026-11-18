@@ -355,11 +355,13 @@ local function updateScreen(state: ScreenState, eye: Vector3, now: number, step:
 	end
 	local gui = state.gui :: SurfaceGui
 	local label = state.label :: ImageLabel
+	local surgeValue = state.model:GetAttribute(SCREENS.SurgeAttribute)
+	local surge = if type(surgeValue) == "number" then math.clamp(surgeValue, 0, 1) else 0
 	if now >= state.nextFrameAt then
 		local count = state.grid * state.grid
 		local frame = (state.frame + rng:NextInteger(1, count - 1)) % count
 		state.frame = frame
-		state.nextFrameAt = now + state.interval
+		state.nextFrameAt = now + state.interval / (1 + surge * SCREENS.SurgeFrameScale)
 		label.ImageRectOffset = Vector2.new(frame % state.grid, frame // state.grid) * state.frameSize
 	end
 	local roll = state.roll
@@ -376,6 +378,9 @@ local function updateScreen(state: ScreenState, eye: Vector3, now: number, step:
 	local level = 1 - SCREENS.FlickerDepth * (0.5 + math.noise(now * SCREENS.FlickerSpeed, state.seed))
 	if now < state.dropUntil then
 		level = SCREENS.DropBrightness
+	end
+	if surge > 0 then
+		level = (1 + surge * SCREENS.SurgeBrightness) * (0.6 + 0.4 * rng:NextNumber())
 	end
 	gui.Brightness = state.baseBrightness * level
 	if state.light then
