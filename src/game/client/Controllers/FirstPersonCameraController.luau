@@ -55,6 +55,8 @@ local autoRotateOverridden = false
 local crosshairGui: ScreenGui? = nil
 local crosshairWanted = false
 local hudHidden = false
+local breathPhase = 0
+local exertion = 0
 
 local function damp(current: number, target: number, speed: number, dt: number): number
 	return current + (target - current) * (1 - math.exp(-speed * dt))
@@ -369,16 +371,24 @@ local function update(dt: number)
 	strafeRoll = damp(strafeRoll, strafeTarget, settings.TiltSmoothing, dt)
 
 	local breathing = settings.Breathing
-	local breathAmount = math.rad(breathing.Degrees) * (1 - breathing.MovingReduction * math.min(bobWeight, 1))
+	local exhausted = breathing.Exhausted
+	local heaviness = 1 + (exhausted.Scale - 1) * exertion
+	breathPhase = (breathPhase + dt * breathing.Rate * (1 + (exhausted.RateScale - 1) * exertion)) % TWO_PI
+	local breathAmount = math.rad(breathing.Degrees) * heaviness * (1 - breathing.MovingReduction * math.min(bobWeight, 1))
+	local breathCycle = math.sin(breathPhase)
 	local noiseTime = elapsed * breathing.NoiseSpeed
-	local breathPitch = (math.noise(noiseTime, NOISE_SEED_PITCH) + math.sin(elapsed * breathing.Rate) * 0.5) * breathAmount
-	local breathYaw = math.noise(noiseTime, NOISE_SEED_YAW) * breathAmount
-	local breathRoll = math.noise(noiseTime, NOISE_SEED_ROLL) * breathAmount * 0.5
+	local driftTime = elapsed * breathing.DriftSpeed
+	local drift = math.rad(breathing.DriftDegrees)
+	local breathPitch = (breathCycle * 0.7 + math.noise(noiseTime, NOISE_SEED_PITCH) * 0.3) * breathAmount
+		+ math.noise(driftTime, NOISE_SEED_PITCH) * drift
+	local breathYaw = math.noise(noiseTime, NOISE_SEED_YAW) * breathAmount * 0.4 + math.noise(driftTime, NOISE_SEED_YAW) * drift
+	local breathRoll = math.noise(noiseTime, NOISE_SEED_ROLL) * breathAmount * 0.35
+	local breathRise = breathCycle * breathing.RiseStuds * heaviness
 	local impactPitch = math.rad(impact.position * settings.Impact.PitchDegreesPerStud)
 
 	local eye = eyePosition(character, root, dt)
 	local rotation = yawRotation * CFrame.Angles(pitch, 0, 0)
-	camera.CFrame = CFrame.new(eye)
+	camera.CFrame = CFrame.new(eye + Vector3.yAxis * breathRise)
 		* rotation
 		* CFrame.new(bobOffset)
 		* CFrame.Angles(breathPitch + impactPitch + bobPitch, breathYaw, bobRoll + strafeRoll + turnRoll + breathRoll)
@@ -442,6 +452,10 @@ function FirstPersonCameraController.snap()
 	airSpeed = 0
 	impact.position = 0
 	impact.velocity = 0
+end
+
+function FirstPersonCameraController.setExertion(value: number)
+	exertion = math.clamp(value, 0, 1)
 end
 
 function FirstPersonCameraController.isEnabled(): boolean

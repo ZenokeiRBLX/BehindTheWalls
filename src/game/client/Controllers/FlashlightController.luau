@@ -27,6 +27,9 @@ type View = {
 	hitLight: PointLight?,
 	hitPart: BasePart?,
 	aim: CFrame?,
+	lit: boolean,
+	shining: boolean,
+	litToken: number,
 }
 
 type ArmJoint = {
@@ -353,7 +356,7 @@ local function updateHitLight(current: View, hit: RaycastResult?)
 		return
 	end
 	local settings = Config.Flashlight.Local.HitLight
-	if not hit or not settings.Enabled then
+	if not hit or not settings.Enabled or not current.shining then
 		light.Enabled = false
 		return
 	end
@@ -579,20 +582,61 @@ local function showView()
 		hitLight = hitLight,
 		hitPart = hitPart,
 		aim = aim,
+		lit = false,
+		shining = false,
+		litToken = 0,
 	}
 	view = current
+	setEnabled(node, false)
 	updateHitLight(current, hit)
 	bindRender()
 	if character then
 		offsetArms(character)
 	end
+	tweenHud(true)
+end
 
+local function shine(current: View, on: boolean)
+	current.shining = on
+	if current.node then
+		setEnabled(current.node, on)
+	end
+	if not on and current.hitLight then
+		current.hitLight.Enabled = false
+	end
+end
+
+local function setLit(lit: boolean)
+	local current = view
+	if not current or current.lit == lit then
+		return
+	end
+	current.lit = lit
+	current.litToken += 1
+	local token = current.litToken
+	local item = current.item
 	if item then
-		setOnUi(item, true)
+		setOnUi(item, lit)
+	end
+	if not lit then
+		shine(current, false)
+		return
+	end
+	if item then
 		playItemSound(item)
 	end
-	setEnabled(node, true)
-	tweenHud(true)
+	task.spawn(function()
+		for _, frame in Config.Flashlight.Local.TurnOnFlicker do
+			if view ~= current or current.litToken ~= token then
+				return
+			end
+			shine(current, frame[1])
+			task.wait(frame[2])
+		end
+		if view == current and current.litToken == token then
+			shine(current, true)
+		end
+	end)
 end
 
 local function hideView()
@@ -681,6 +725,7 @@ local function refreshState(character: Model)
 	local state = character:GetAttribute(stateAttribute())
 	if state == STATE_EQUIPPING or state == STATE_ON then
 		showView()
+		setLit(state == STATE_ON)
 	else
 		hideView()
 	end

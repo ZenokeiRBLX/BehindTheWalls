@@ -8,6 +8,7 @@ local Workspace = game:GetService("Workspace")
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Modules"):WaitForChild("Config"))
 local FirstPersonCameraController = require(script.Parent:WaitForChild("FirstPersonCameraController"))
 local FlashlightController = require(script.Parent:WaitForChild("FlashlightController"))
+local SprintController = require(script.Parent:WaitForChild("SprintController"))
 
 local HudController = {}
 
@@ -36,6 +37,14 @@ type Waypoint = {
 	distance: TextLabel,
 	position: Vector2?,
 	alpha: number,
+}
+
+type StaminaBar = {
+	group: CanvasGroup,
+	fill: Frame,
+	shown: number,
+	alpha: number,
+	fullSince: number,
 }
 
 type Step = {
@@ -78,6 +87,7 @@ type MainView = {
 	heartTransparency: number,
 	guides: { [TextLabel]: Guide },
 	waypoint: Waypoint?,
+	stamina: StaminaBar?,
 }
 
 type SlotSettings = {
@@ -570,11 +580,70 @@ local function updateWaypoint(view: MainView, camera: Camera, target: Vector3, m
 	setGroupTransparency(waypoint.group, 1 - waypoint.alpha)
 end
 
+local function buildStamina(view: MainView): StaminaBar
+	local settings = Config.Hud.Stamina
+	local group = Instance.new("CanvasGroup")
+	group.Name = settings.Name
+	group.AnchorPoint = Vector2.new(0.5, 0.5)
+	group.Position = UDim2.fromScale(settings.Position[1], settings.Position[2])
+	group.Size = UDim2.new(settings.Width, 0, 0, settings.Height)
+	group.BackgroundColor3 = Color3.new(0, 0, 0)
+	group.BackgroundTransparency = settings.BackgroundTransparency
+	group.BorderSizePixel = 0
+	group.GroupTransparency = 1
+	group.Visible = false
+	group.ZIndex = 40
+	newCorner(group, UDim.new(1, 0))
+	local fill = Instance.new("Frame")
+	fill.Name = "Fill"
+	fill.AnchorPoint = Vector2.new(0.5, 0.5)
+	fill.Position = UDim2.fromScale(0.5, 0.5)
+	fill.Size = UDim2.fromScale(1, 1)
+	fill.BackgroundColor3 = Config.Hud.AccentColor
+	fill.BorderSizePixel = 0
+	fill.ZIndex = 41
+	newCorner(fill, UDim.new(1, 0))
+	fill.Parent = group
+	group.Parent = view.gui
+	return { group = group, fill = fill, shown = 1, alpha = 0, fullSince = -math.huge }
+end
+
+local function updateStamina(view: MainView, dt: number)
+	local bar = view.stamina
+	if not bar then
+		return
+	end
+	local settings = Config.Hud.Stamina
+	local value, maximum, exhausted = SprintController.getStamina()
+	local fraction = math.clamp(value / math.max(maximum, 1), 0, 1)
+	bar.shown += (fraction - bar.shown) * (1 - math.exp(-settings.Smoothing * dt))
+	bar.fill.Size = UDim2.fromScale(bar.shown, 1)
+	local now = os.clock()
+	if fraction < 0.999 then
+		bar.fullSince = math.huge
+	elseif bar.fullSince == math.huge then
+		bar.fullSince = now
+	end
+	local wanted = shown and view.gui.Enabled and (fraction < 0.999 or now - bar.fullSince < settings.HideDelay)
+	local fade = dt / math.max(settings.FadeSeconds, 0.01)
+	bar.alpha = if wanted then math.min(bar.alpha + fade, 1) else math.max(bar.alpha - fade, 0)
+	local color = Config.Hud.AccentColor
+	if exhausted then
+		local pulse = 0.5 + 0.5 * math.sin(now / settings.ExhaustedPulseSeconds * math.pi * 2)
+		color = settings.LowColor:Lerp(Color3.new(0.35, 0.08, 0.08), pulse)
+	elseif fraction < settings.LowFraction then
+		color = settings.LowColor:Lerp(Config.Hud.AccentColor, fraction / settings.LowFraction)
+	end
+	bar.fill.BackgroundColor3 = color
+	setGroupTransparency(bar.group, 1 - bar.alpha)
+end
+
 local function updateGuide(dt: number)
 	local view = mainView
 	if not view then
 		return
 	end
+	updateStamina(view, dt)
 	local camera = Workspace.CurrentCamera
 	local character = Players.LocalPlayer.Character
 	local root = if character then character:FindFirstChild("HumanoidRootPart") else nil
@@ -914,6 +983,10 @@ local function unbindMain()
 		view.waypoint.group:Destroy()
 		view.waypoint = nil
 	end
+	if view.stamina then
+		view.stamina.group:Destroy()
+		view.stamina = nil
+	end
 end
 
 local function bindMain(gui: ScreenGui)
@@ -1024,6 +1097,7 @@ local function bindMain(gui: ScreenGui)
 	end
 
 	view.waypoint = buildWaypoint(view)
+	view.stamina = buildStamina(view)
 	mainView = view
 	renderObjectives(view)
 	table.insert(view.connections, gui.AncestryChanged:Connect(function()

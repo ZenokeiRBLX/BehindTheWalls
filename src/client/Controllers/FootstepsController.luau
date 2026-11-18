@@ -19,6 +19,7 @@ local CULL_DISTANCE_SQ = CULL_DISTANCE * CULL_DISTANCE
 local DEFAULT_ROLLOFF_MIN = 5
 local DEFAULT_ROLLOFF_MAX = 60
 local DEFAULT_FOLDER_NAMES = { "Stone", "Concrete", "Default", "Ground" }
+local WADE_DEPTH = 0.4
 
 local MATERIAL_FOLDER_ALIASES: { [Enum.Material]: string } = {
 	[Enum.Material.Grass] = "Grass",
@@ -181,15 +182,29 @@ function FootstepsController.playStepAt(rootPart: BasePart, material: Enum.Mater
 	end
 end
 
+local waterParams = RaycastParams.new()
+waterParams.FilterType = Enum.RaycastFilterType.Include
+waterParams.FilterDescendantsInstances = { Workspace.Terrain }
+waterParams.IgnoreWater = false
+
+local function stepMaterial(entry: TrackedCharacter): Enum.Material
+	local reach = entry.humanoid.HipHeight + entry.rootPart.Size.Y / 2 + WADE_DEPTH
+	local hit = Workspace:Raycast(entry.rootPart.Position, Vector3.new(0, -reach, 0), waterParams)
+	if hit and hit.Material == Enum.Material.Water then
+		return Enum.Material.Water
+	end
+	return entry.humanoid.FloorMaterial
+end
+
 local function playStep(entry: TrackedCharacter)
-	FootstepsController.playStepAt(entry.rootPart, entry.humanoid.FloorMaterial)
+	FootstepsController.playStepAt(entry.rootPart, stepMaterial(entry))
 end
 
 local function playLanding(entry: TrackedCharacter)
 	if not isWithinRange(entry.rootPart) then
 		return
 	end
-	local template = pickVariant(entry.humanoid.FloorMaterial)
+	local template = pickVariant(stepMaterial(entry))
 	if template then
 		playVariant(template, entry.rootPart, LAND_PITCH_MIN, LAND_PITCH_JITTER)
 	end
