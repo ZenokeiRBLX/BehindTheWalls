@@ -5,6 +5,7 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Modules"):WaitForChild("Config"))
+local CutsceneFormation = require(Shared:WaitForChild("Modules"):WaitForChild("CutsceneFormation"))
 local Blink = require(ReplicatedStorage:WaitForChild("Blink"):WaitForChild("Server"))
 
 local MatchSystem = {}
@@ -429,24 +430,13 @@ local function publishPlayersCFrame()
 		return
 	end
 	Workspace:SetAttribute(HOLE_ATTRIBUTE, hole)
-	local toHole = Vector3.new(hole.Position.X - center.X, 0, hole.Position.Z - center.Z)
-	local walkForward = if toHole.Magnitude > 0.001 then toHole.Unit else forward
-	local lineHead = Vector3.new(hole.Position.X, center.Y, hole.Position.Z) - walkForward * Config.Cutscene.StopDistance
-	local order: { number } = {}
-	for index in slots do
-		table.insert(order, index)
+	local starts: { [number]: Vector3 } = {}
+	for index, pivot in slots do
+		starts[index] = pivot.Position
 	end
-	table.sort(order, function(a, b)
-		local da = slots[a].Position:Dot(walkForward)
-		local db = slots[b].Position:Dot(walkForward)
-		if da ~= db then
-			return da > db
-		end
-		return a < b
-	end)
-	for rank, index in order do
-		local position = lineHead - walkForward * ((rank - 1) * Config.Cutscene.LineSpacing)
-		Workspace:SetAttribute(WALK_END_ATTRIBUTE_PREFIX .. index, CFrame.lookAt(position, position + walkForward))
+	local spots = CutsceneFormation.compute(hole.Position, starts)
+	for index, spot in spots do
+		Workspace:SetAttribute(WALK_END_ATTRIBUTE_PREFIX .. index, spot.gather)
 	end
 end
 

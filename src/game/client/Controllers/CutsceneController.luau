@@ -11,6 +11,7 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Modules"):WaitForChild("Config"))
+local CutsceneFormation = require(Shared:WaitForChild("Modules"):WaitForChild("CutsceneFormation"))
 local Blink = require(ReplicatedStorage:WaitForChild("Blink"):WaitForChild("Client"))
 local WRagdoll = require(ReplicatedStorage:WaitForChild("WRagdoll"))
 local FootstepsController = require(script.Parent.Parent:WaitForChild("FootstepsController"))
@@ -29,7 +30,8 @@ local CAMERA_CFRAME_ATTRIBUTE = "CutsceneCameraCFrame"
 local CAMERA_FOV_ATTRIBUTE = "CutsceneCameraFov"
 local PLAYERS_CFRAME_ATTRIBUTE = "CutscenePlayersCFrame"
 local HOLE_ATTRIBUTE = "CutsceneHoleCFrame"
-local WALK_END_ATTRIBUTE_PREFIX = "CutsceneWalkEnd"
+local HOLE_PART_NAME = "Cutscene_Hole"
+local HOLE_MATCH_DISTANCE = 2
 local PRELOADED_ATTRIBUTE = "CutscenePreloaded"
 local PLAYERS_FOLDER_NAME = "Teleport_Players"
 local STREAM_TIMEOUT = 8
@@ -58,6 +60,12 @@ local ROOT_JOINT_NAME = "Root"
 local TORSO_PARTS = { HumanoidRootPart = true, LowerTorso = true, UpperTorso = true }
 local LIFT_ATTACHMENT_NAME = "CutsceneLift"
 local RAGDOLL_ATTRIBUTE = "Ragdolled"
+local WALK_EASE_LINEAR = 0.6
+local SPEED_SMOOTHING = 8
+local EFFECTS_FOLDER_NAME = "CutsceneEffects"
+local DUST_ANCHOR_SIZE = 0.2
+local DUST_LIFETIME_MARGIN = 0.5
+local SHAKE_SEEDS = { 0.37, 7.13, 13.71 }
 
 type CameraTarget = {
 	cframe: CFrame,
@@ -67,14 +75,21 @@ type CameraTarget = {
 type Walker = {
 	rig: Model,
 	slot: number,
+	rank: number,
+	offset: number,
 	rootPart: BasePart?,
 	startCFrame: CFrame,
 	endCFrame: CFrame,
+	brinkCFrame: CFrame,
 	formationEnd: Vector3,
 	track: AnimationTrack?,
+	animationSpeed: number,
+	speed: number,
 	lastPosition: Vector3,
 	distanceSinceStep: number,
 	stepStride: number,
+	dropAt: number,
+	isLocal: boolean,
 	dropped: boolean,
 }
 
@@ -121,6 +136,11 @@ local currentCFrame: CFrame? = nil
 local currentFov: number? = nil
 local sequenceToken = 0
 local walkers: { Walker } = {}
+local groupForward = -Vector3.zAxis
+local cameraShake = 0
+local effectsFolder: Folder? = nil
+local holePart: BasePart? = nil
+local holeSize: Vector3? = nil
 local cameraRig: CameraRig? = nil
 local skipLabel: TextLabel? = nil
 local skipState: Blink.CutsceneSkipData? = nil
@@ -244,7 +264,12 @@ end
 
 local function walkEase(alpha: number): number
 	alpha = math.clamp(alpha, 0, 1)
-	return alpha * 0.6 + smoothstep(alpha) * 0.4
+	return alpha * WALK_EASE_LINEAR + smoothstep(alpha) * (1 - WALK_EASE_LINEAR)
+end
+
+local function blendDirection(from: Vector3, to: Vector3, alpha: number): Vector3
+	local blended = from:Lerp(to, alpha)
+	return if blended.Magnitude > PIVOT_EPSILON then blended.Unit else to
 end
 
 local function readScene(start: CFrame): Scene
@@ -346,47 +371,57 @@ local function floorMaterialAt(position: Vector3): Enum.Material
 	return if result then result.Material else Enum.Material.Concrete
 end
 
-local function collectWalkers(): { Walker }
+local function collectWalkers(scene: Scene): { Walker }
 	local list: { Walker } = {}
 	local folder = Workspace:FindFirstChild(PLAYERS_FOLDER_NAME, true)
-	if not folder then
+	local hole = scene.hole
+	if not folder or not hole then
 		return list
 	end
 	local raycastParams = RaycastParams.new()
 	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 	raycastParams.FilterDescendantsInstances = { folder }
 	stepRaycastParams = raycastParams
+	local rigs: { [number]: Model } = {}
+	local starts: { [number]: Vector3 } = {}
 	for _, child in folder:GetChildren() do
-		if not child:IsA("Model") then
-			continue
+		local index = if child:IsA("Model") then slotIndex(child) else nil
+		if index and not rigs[index] then
+			rigs[index] = child :: Model
+			starts[index] = child:GetPivot().Position
 		end
-		local index = slotIndex(child)
-		if not index then
-			continue
-		end
-		local finish = readCFrameAttribute(WALK_END_ATTRIBUTE_PREFIX .. index)
-		if not finish then
-			continue
-		end
-		local startPosition = child:GetPivot().Position
-		local forward = flatForward(finish)
-		local endPosition = Vector3.new(finish.Position.X, startPosition.Y, finish.Position.Z)
-		local travel = (endPosition - startPosition):Dot(forward)
-		local rootPart = child.PrimaryPart or child:FindFirstChild("HumanoidRootPart")
+	end
+	local spots, forward = CutsceneFormation.compute(hole.Position, starts)
+	groupForward = forward
+	for index, spot in spots do
+		local rig = rigs[index]
+		local startPosition = starts[index]
+		local travel = (spot.gather.Position - startPosition):Dot(forward)
+		local rootPart = rig.PrimaryPart or rig:FindFirstChild("HumanoidRootPart")
 		table.insert(list, {
-			rig = child,
+			rig = rig,
 			slot = index,
+			rank = spot.rank,
+			offset = spot.offset,
 			rootPart = if rootPart and rootPart:IsA("BasePart") then rootPart else nil,
 			startCFrame = CFrame.lookAt(startPosition, startPosition + forward),
-			endCFrame = CFrame.lookAt(endPosition, endPosition + forward),
+			endCFrame = spot.gather,
+			brinkCFrame = spot.brink,
 			formationEnd = startPosition + forward * travel,
 			track = nil,
+			animationSpeed = 1,
+			speed = 0,
 			lastPosition = startPosition,
 			distanceSinceStep = 0,
 			stepStride = math.max(Config.Cutscene.StepStride, 0.5),
+			dropAt = 0,
+			isLocal = false,
 			dropped = false,
 		})
 	end
+	table.sort(list, function(a, b)
+		return a.slot < b.slot
+	end)
 	return list
 end
 
@@ -402,18 +437,28 @@ local function groupCenter(list: { Walker }, fallback: Vector3): Vector3
 	return if count > 0 then sum / count else fallback
 end
 
-local function walkerPosition(walker: Walker, alpha: number): Vector3
+local function walkerPosition(walker: Walker, alpha: number): (Vector3, number)
 	local formation = walker.startCFrame.Position:Lerp(walker.formationEnd, alpha)
-	local line = walker.startCFrame.Position:Lerp(walker.endCFrame.Position, alpha)
-	local mergeStart = math.clamp(Config.Cutscene.LineMergeStart, 0, 0.99)
+	local gathered = walker.startCFrame.Position:Lerp(walker.endCFrame.Position, alpha)
+	local mergeStart = math.clamp(Config.Cutscene.Gather.MergeStart, 0, 0.99)
 	local merge = smoothstep((alpha - mergeStart) / (1 - mergeStart))
-	return formation:Lerp(line, merge)
+	return formation:Lerp(gathered, merge), merge
 end
 
-local function stepWalker(walker: Walker, position: Vector3)
+local function stepWalker(walker: Walker, position: Vector3, dt: number)
 	local delta = position - walker.lastPosition
 	walker.lastPosition = position
-	walker.distanceSinceStep += Vector3.new(delta.X, 0, delta.Z).Magnitude
+	local distance = Vector3.new(delta.X, 0, delta.Z).Magnitude
+	if dt > 0 then
+		walker.speed += (distance / dt - walker.speed) * (1 - math.exp(-SPEED_SMOOTHING * dt))
+		local track = walker.track
+		if track then
+			local settings = Config.Cutscene
+			local scale = math.clamp(walker.speed / math.max(settings.WalkSpeed, 0.1), settings.WalkAnimationMinScale, settings.WalkAnimationMaxScale)
+			track:AdjustSpeed(walker.animationSpeed * scale)
+		end
+	end
+	walker.distanceSinceStep += distance
 	if walker.distanceSinceStep < walker.stepStride then
 		return
 	end
@@ -423,12 +468,13 @@ local function stepWalker(walker: Walker, position: Vector3)
 	end
 end
 
-local function moveWalkers(alpha: number)
+local function moveWalkers(alpha: number, dt: number)
 	for _, walker in walkers do
 		if walker.rig.Parent and not walker.dropped then
-			local position = walkerPosition(walker, alpha)
-			walker.rig:PivotTo(CFrame.lookAt(position, position + walker.endCFrame.LookVector))
-			stepWalker(walker, position)
+			local position, merge = walkerPosition(walker, alpha)
+			local look = blendDirection(walker.startCFrame.LookVector, walker.endCFrame.LookVector, merge)
+			walker.rig:PivotTo(CFrame.lookAt(position, position + look))
+			stepWalker(walker, position, dt)
 		end
 	end
 end
@@ -597,12 +643,198 @@ local function playFallSounds(rootPart: BasePart)
 	end
 end
 
-local function clearDroppedWalkers(list: { Walker })
+local function playOptionalSound(name: string?)
+	local sound = if name then findSound(name) else nil
+	if sound then
+		sound.TimePosition = 0
+		sound:Play()
+	end
+end
+
+local function clearLocalWalkers(list: { Walker })
 	for _, walker in list do
-		if walker.dropped then
+		if walker.isLocal then
 			walker.rig:Destroy()
 		end
 	end
+end
+
+local function ensureEffectsFolder(): Folder
+	local existing = effectsFolder
+	if existing and existing.Parent then
+		return existing
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = EFFECTS_FOLDER_NAME
+	folder.Parent = Workspace
+	effectsFolder = folder
+	return folder
+end
+
+local function clearEffects()
+	if effectsFolder then
+		effectsFolder:Destroy()
+		effectsFolder = nil
+	end
+end
+
+local function findHolePart(position: Vector3): BasePart?
+	local best: BasePart? = nil
+	local bestDistance = HOLE_MATCH_DISTANCE
+	for _, descendant in Workspace:GetDescendants() do
+		if descendant:IsA("BasePart") and (descendant.Name == HOLE_PART_NAME or descendant.Name == Config.Cutscene.HoleName) then
+			local distance = (descendant.Position - position).Magnitude
+			if distance < bestDistance then
+				best = descendant
+				bestDistance = distance
+			end
+		end
+	end
+	return best
+end
+
+local function setHoleScale(scale: number)
+	local part = holePart
+	local size = holeSize
+	if not part or not size or not part.Parent then
+		return
+	end
+	local cframe = part.CFrame
+	local function axisScale(direction: Vector3): number
+		return if math.abs(direction.Y) > 0.7 then 1 else scale
+	end
+	part.Size = size * Vector3.new(axisScale(cframe.RightVector), axisScale(cframe.UpVector), axisScale(cframe.LookVector))
+end
+
+local function randomIn(range: { number }): number
+	return WALK_RNG:NextNumber(range[1], range[2])
+end
+
+local function ringPoint(center: Vector3, forward: Vector3, right: Vector3, angle: number, radius: number): (Vector3, Vector3)
+	local outward = -forward * math.cos(angle) + right * math.sin(angle)
+	return center + outward * radius, outward
+end
+
+local function spawnChunk(position: Vector3, sizeRange: { number }, velocity: Vector3)
+	local rubble = Config.Cutscene.Collapse.Rubble
+	local width = randomIn(sizeRange)
+	local part = Instance.new("Part")
+	part.Name = "Rubble"
+	part.Size = Vector3.new(width, width * WALK_RNG:NextNumber(0.35, 0.6), randomIn(sizeRange))
+	part.Color = rubble.Color
+	part.Material = rubble.Material
+	part.Anchored = false
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.CFrame = CFrame.new(position - Vector3.yAxis * (part.Size.Y * 0.3))
+		* CFrame.Angles(WALK_RNG:NextNumber(-0.4, 0.4), WALK_RNG:NextNumber(0, math.pi * 2), WALK_RNG:NextNumber(-0.4, 0.4))
+	part.Parent = ensureEffectsFolder()
+	part.AssemblyLinearVelocity = velocity
+	part.AssemblyAngularVelocity = WALK_RNG:NextUnitVector() * rubble.Spin
+	Debris:AddItem(part, rubble.Lifetime)
+end
+
+local function spawnDust(position: Vector3)
+	local dust = Config.Cutscene.Collapse.Dust
+	if dust.Count <= 0 then
+		return
+	end
+	local anchor = Instance.new("Part")
+	anchor.Name = "Dust"
+	anchor.Size = Vector3.one * DUST_ANCHOR_SIZE
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.CastShadow = false
+	anchor.CFrame = CFrame.new(position)
+	local emitter = Instance.new("ParticleEmitter")
+	emitter.Texture = dust.Texture
+	emitter.Color = ColorSequence.new(dust.Color)
+	emitter.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, dust.Size[1]),
+		NumberSequenceKeypoint.new(1, dust.Size[2]),
+	})
+	emitter.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(0.15, dust.Transparency),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	emitter.Lifetime = NumberRange.new(dust.Lifetime[1], dust.Lifetime[2])
+	emitter.Speed = NumberRange.new(dust.Speed[1], dust.Speed[2])
+	emitter.SpreadAngle = Vector2.new(60, 60)
+	emitter.EmissionDirection = Enum.NormalId.Top
+	emitter.Rotation = NumberRange.new(0, 360)
+	emitter.RotSpeed = NumberRange.new(-30, 30)
+	emitter.Drag = 1.5
+	emitter.Acceleration = Vector3.new(0, -1, 0)
+	emitter.LightInfluence = 1
+	emitter.LightEmission = 0
+	emitter.Enabled = false
+	emitter.Parent = anchor
+	anchor.Parent = ensureEffectsFolder()
+	emitter:Emit(dust.Count)
+	Debris:AddItem(anchor, dust.Lifetime[2] + DUST_LIFETIME_MARGIN)
+end
+
+local function spawnPebble(center: Vector3, forward: Vector3, right: Vector3, span: { number }, edgeRadius: number, crackScale: number)
+	local pebbles = Config.Cutscene.Collapse.Pebbles
+	local position, outward = ringPoint(center, forward, right, randomIn(span), WALK_RNG:NextNumber(edgeRadius * 0.97, edgeRadius * crackScale))
+	local velocity = -outward * (WALK_RNG:NextNumber(0.2, 1) * pebbles.Speed) - Vector3.yAxis * WALK_RNG:NextNumber(0, pebbles.Speed)
+	spawnChunk(position, pebbles.SizeRange, velocity)
+end
+
+local function spawnCollapse(center: Vector3, forward: Vector3, right: Vector3, span: { number }, innerRadius: number, outerRadius: number)
+	local collapse = Config.Cutscene.Collapse
+	local rubble = collapse.Rubble
+	for _ = 1, math.max(rubble.Count, 0) do
+		local position, outward = ringPoint(center, forward, right, randomIn(span), WALK_RNG:NextNumber(innerRadius, outerRadius))
+		local velocity = -outward * (WALK_RNG:NextNumber(0.3, 1) * rubble.Speed) + Vector3.yAxis * WALK_RNG:NextNumber(-rubble.Speed, rubble.Speed * 0.4)
+		spawnChunk(position, rubble.SizeRange, velocity)
+	end
+	local points = math.max(collapse.Dust.Points, 0)
+	for index = 1, points do
+		local alpha = if points > 1 then (index - 1) / (points - 1) else 0.5
+		local position = ringPoint(center, forward, right, span[1] + (span[2] - span[1]) * alpha, (innerRadius + outerRadius) * 0.5)
+		spawnDust(position)
+	end
+end
+
+local function holeScaleAt(elapsed: number, rumbleAt: number, collapseAt: number, crackScale: number, holeScale: number): number
+	if elapsed < rumbleAt then
+		return 1
+	end
+	if elapsed < collapseAt then
+		return 1 + (crackScale - 1) * smoothstep((elapsed - rumbleAt) / math.max(collapseAt - rumbleAt, PIVOT_EPSILON))
+	end
+	local grow = math.clamp((elapsed - collapseAt) / math.max(Config.Cutscene.Collapse.GrowSeconds, PIVOT_EPSILON), 0, 1)
+	return crackScale + (holeScale - crackScale) * (1 - (1 - grow) ^ 3)
+end
+
+local function shakeAt(elapsed: number, rumbleAt: number, collapseAt: number): number
+	local collapse = Config.Cutscene.Collapse
+	if elapsed < rumbleAt then
+		return 0
+	end
+	if elapsed < collapseAt then
+		return collapse.RumbleShakeDegrees * smoothstep((elapsed - rumbleAt) / math.max(collapseAt - rumbleAt, PIVOT_EPSILON))
+	end
+	return collapse.ShakeDegrees * (1 - smoothstep((elapsed - collapseAt) / math.max(collapse.ShakeDecaySeconds, PIVOT_EPSILON)))
+end
+
+local function shakeRotation(time: number): CFrame
+	if cameraShake <= 0 then
+		return CFrame.identity
+	end
+	local phase = time * Config.Cutscene.Collapse.ShakeSpeed
+	local amount = math.rad(cameraShake) * 2
+	return CFrame.Angles(
+		math.noise(phase, SHAKE_SEEDS[1]) * amount,
+		math.noise(phase, SHAKE_SEEDS[2]) * amount,
+		math.noise(phase, SHAKE_SEEDS[3]) * amount * 0.5
+	)
 end
 
 local function localOffset(values: { number }, forward: Vector3, right: Vector3): Vector3
@@ -652,20 +884,18 @@ local function frameShot(shot: Shot, shotAlpha: number, anchor: Vector3, focusOr
 		local fov = currentFov or shot.fov
 		currentFov = fov + (shot.fov - fov) * fovBlend
 	end
-	currentCFrame = CFrame.lookAt(rig.position, rig.focus)
+	currentCFrame = CFrame.lookAt(rig.position, rig.focus) * shakeRotation(time)
 end
 
-local function ragdollWalker(walker: Walker, forward: Vector3, right: Vector3)
-	walker.dropped = true
-	if walker.track then
-		walker.track:Stop(0)
-		walker.track = nil
-	end
+local function localizeWalker(walker: Walker)
 	local source = walker.rig
-	if not source.PrimaryPart or not source:FindFirstChild("UpperTorso") then
+	if walker.isLocal or walker.dropped or not source.Parent then
 		return
 	end
 	local rig = source:Clone()
+	if not rig then
+		return
+	end
 	for _, descendant in rig:GetDescendants() do
 		if descendant:IsA("LuaSourceContainer") then
 			descendant:Destroy()
@@ -674,7 +904,40 @@ local function ragdollWalker(walker: Walker, forward: Vector3, right: Vector3)
 	rig.Parent = source.Parent
 	source.Parent = nil
 	walker.rig = rig
-	walker.rootPart = rig.PrimaryPart
+	walker.isLocal = true
+	local rootPart = rig.PrimaryPart or rig:FindFirstChild("HumanoidRootPart")
+	walker.rootPart = if rootPart and rootPart:IsA("BasePart") then rootPart else nil
+	local previous = walker.track
+	walker.track = nil
+	if not previous then
+		return
+	end
+	local timePosition = previous.TimePosition
+	local speed = previous.Speed
+	previous:Stop(0)
+	local track = loadWalkTrack(rig, walker.slot)
+	if track then
+		track:Play(0)
+		track.TimePosition = timePosition
+		track:AdjustSpeed(speed)
+		walker.track = track
+	end
+end
+
+local function ragdollWalker(walker: Walker, forward: Vector3, right: Vector3)
+	if walker.dropped then
+		return
+	end
+	localizeWalker(walker)
+	walker.dropped = true
+	if walker.track then
+		walker.track:Stop(0)
+		walker.track = nil
+	end
+	local rig = walker.rig
+	if not walker.isLocal or not rig.PrimaryPart or not rig:FindFirstChild("UpperTorso") then
+		return
+	end
 	local humanoid = rig:FindFirstChildOfClass("Humanoid")
 	if humanoid then
 		humanoid.RequiresNeck = false
@@ -747,7 +1010,7 @@ local function walkToHole(token: number, scene: Scene): (Vector3?, Vector3?)
 	endCenter /= #walkers
 	local distance = (endCenter - startCenter).Magnitude
 	local duration = math.max(distance / math.max(settings.WalkSpeed, 1), 0.5)
-	local forward = flatForward(walkers[1].endCFrame)
+	local forward = groupForward
 	local right = forward:Cross(Vector3.yAxis).Unit
 
 	local baseAnimationSpeed = settings.WalkSpeed / math.max(settings.WalkAnimationReferenceSpeed, 1)
@@ -762,7 +1025,8 @@ local function walkToHole(token: number, scene: Scene): (Vector3?, Vector3?)
 				track.TimePosition = WALK_RNG:NextNumber(0, track.Length)
 			end
 			local rate = 1 + WALK_RNG:NextNumber(-variance, variance)
-			track:AdjustSpeed(baseAnimationSpeed * rate)
+			walker.animationSpeed = baseAnimationSpeed * rate
+			track:AdjustSpeed(walker.animationSpeed * WALK_EASE_LINEAR)
 			walker.stepStride = math.max(Config.Cutscene.StepStride / rate, 0.5)
 		end
 	end
@@ -786,11 +1050,10 @@ local function walkToHole(token: number, scene: Scene): (Vector3?, Vector3?)
 		local elapsed = now - startTime
 		local progress = math.clamp(elapsed / duration, 0, 1)
 		local alpha = walkEase(progress)
-		moveWalkers(alpha)
+		moveWalkers(alpha, dt)
 		local center = groupCenter(walkers, startCenter:Lerp(endCenter, alpha))
 
 		if elapsed < craneSeconds then
-			moveWalkers(alpha)
 			currentCFrame = craneFrom:Lerp(craneTo, smoothstep(elapsed / craneSeconds))
 			currentFov = settings.FieldOfView
 			RunService.RenderStepped:Wait()
@@ -856,49 +1119,104 @@ end
 
 local function fallIntoHole(token: number, scene: Scene, forward: Vector3, right: Vector3)
 	local settings = Config.Cutscene
-	stopMusic(settings.Audio.CutsceneMusicName, settings.Audio.CutsceneMusicFadeOutSeconds)
+	local gather = settings.Gather
+	local collapse = settings.Collapse
 	local fall = settings.Fall
+	stopMusic(settings.Audio.CutsceneMusicName, settings.Audio.CutsceneMusicFadeOutSeconds)
+	for _, walker in walkers do
+		localizeWalker(walker)
+	end
 	local hole = scene.hole :: CFrame
 	local groundY = walkers[1].endCFrame.Position.Y
 	local holeGround = Vector3.new(hole.Position.X, groundY, hole.Position.Z)
-	local speed = math.max(settings.WalkSpeed, 1)
-	local travels: { [Walker]: number } = {}
-	local duration = 0.1
+
+	local entrySpeed = math.max(settings.WalkSpeed * WALK_EASE_LINEAR, 0.1)
+	local creepSpeed = math.max(gather.CreepSpeed, 0)
+	local distance = math.max(gather.ApproachDistance, 0)
+	local approachSeconds = 2 * distance / (entrySpeed + creepSpeed)
+	local collapseAt = approachSeconds + math.max(collapse.Delay, 0)
+	local rumbleAt = math.max(collapseAt - math.max(collapse.RumbleLeadSeconds, 0), 0)
+	local lastDrop = collapseAt
+	local swallowRadius = 0
+	local spanLow, spanHigh = 0, 0
 	for _, walker in walkers do
-		local travel = math.max((holeGround - walker.endCFrame.Position):Dot(forward) - fall.DropDistance, 0)
-		travels[walker] = travel
-		duration = math.max(duration, travel / speed)
+		walker.dropAt = collapseAt
+			+ math.abs(walker.offset) * collapse.CascadeStep
+			+ (walker.rank - 1) * collapse.RankDelay
+			+ WALK_RNG:NextNumber(0, math.max(collapse.Jitter, 0))
+		lastDrop = math.max(lastDrop, walker.dropAt)
+		local offset = walker.brinkCFrame.Position - holeGround
+		local flat = Vector3.new(offset.X, 0, offset.Z)
+		swallowRadius = math.max(swallowRadius, flat.Magnitude)
+		local angle = math.atan2(flat:Dot(right), flat:Dot(-forward))
+		spanLow = math.min(spanLow, angle)
+		spanHigh = math.max(spanHigh, angle)
 	end
+	local edgeRadius = math.max(collapse.EdgeRadius, 0.1)
+	local holeScale = math.clamp((swallowRadius + collapse.Swallow) / edgeRadius, 1, math.max(collapse.MaxHoleScale, 1))
+	local crackScale = math.clamp(collapse.CrackScale, 1, holeScale)
+	local margin = math.rad(collapse.Rubble.SpanMarginDegrees)
+	local span = { spanLow - margin, spanHigh + margin }
+	local pebbleTimes: { number } = {}
+	for _ = 1, math.max(collapse.Pebbles.Count, 0) do
+		table.insert(pebbleTimes, WALK_RNG:NextNumber(rumbleAt, collapseAt))
+	end
+	table.sort(pebbleTimes)
+	local nextPebble = 1
+	local rumbled = false
+	local collapsed = false
+
 	local shots = fall.Shots :: { Shot }
-	local total = duration + fall.DiveDelay
+	local total = lastDrop + fall.DiveDelay
 	local lastFrame = os.clock()
-	local startTime = os.clock()
+	local startTime = lastFrame
 	while not finished and sequenceToken == token do
 		local now = os.clock()
 		local dt = now - lastFrame
 		lastFrame = now
 		local elapsed = now - startTime
-		local walked = elapsed * speed
+		local walked = if elapsed < approachSeconds
+			then entrySpeed * elapsed + (creepSpeed - entrySpeed) * elapsed * elapsed / (2 * approachSeconds)
+			else distance + creepSpeed * (elapsed - approachSeconds)
 		for _, walker in walkers do
 			if walker.dropped or not walker.rig.Parent then
 				continue
 			end
-			local travel = travels[walker]
-			local position = walker.endCFrame.Position + forward * math.min(walked, travel)
-			walker.rig:PivotTo(CFrame.lookAt(position, position + forward))
-			stepWalker(walker, position)
-			if walked >= travel then
-				ragdollWalker(walker, forward, right)
+			local heading = walker.endCFrame.LookVector
+			local inward = walker.brinkCFrame.LookVector
+			local position = if walked <= distance
+				then walker.endCFrame.Position + heading * walked
+				else walker.brinkCFrame.Position + inward * (walked - distance)
+			local turn = if distance > 0 then smoothstep(walked / distance) else 1
+			local look = blendDirection(heading, inward, turn)
+			walker.rig:PivotTo(CFrame.lookAt(position, position + look))
+			stepWalker(walker, position, dt)
+			if elapsed >= walker.dropAt then
+				ragdollWalker(walker, inward, inward:Cross(Vector3.yAxis).Unit)
 			end
 		end
-		local progress = math.clamp(elapsed / duration, 0, 1)
-		local shot, shotAlpha = shotAt(shots, progress)
+		if not rumbled and elapsed >= rumbleAt then
+			rumbled = true
+			playOptionalSound(settings.Audio.RumbleName)
+		end
+		while nextPebble <= #pebbleTimes and elapsed >= pebbleTimes[nextPebble] do
+			nextPebble += 1
+			spawnPebble(holeGround, forward, right, span, edgeRadius, crackScale)
+		end
+		if not collapsed and elapsed >= collapseAt then
+			collapsed = true
+			spawnCollapse(holeGround, forward, right, span, edgeRadius, edgeRadius * holeScale)
+		end
+		setHoleScale(holeScaleAt(elapsed, rumbleAt, collapseAt, crackScale, holeScale))
+		cameraShake = shakeAt(elapsed, rumbleAt, collapseAt)
+		local shot, shotAlpha = shotAt(shots, math.clamp(elapsed / math.max(total, PIVOT_EPSILON), 0, 1))
 		frameShot(shot, shotAlpha, holeGround, holeGround, forward, right, dt, now - startTime)
 		if elapsed >= total then
 			break
 		end
 		RunService.RenderStepped:Wait()
 	end
+	cameraShake = 0
 	stopWalkers(walkers)
 	if finished or sequenceToken ~= token then
 		return
@@ -1184,8 +1502,11 @@ function CutsceneController.release()
 	released = true
 	finished = true
 	sequenceToken += 1
+	cameraShake = 0
 	stopWalkers(walkers)
-	clearDroppedWalkers(walkers)
+	clearLocalWalkers(walkers)
+	clearEffects()
+	setHoleScale(1)
 	if gui then
 		gui.Enabled = false
 	end
@@ -1268,11 +1589,15 @@ function CutsceneController.start()
 		end
 		local scene = readScene(target.cframe)
 		preload(player, scene)
+		if scene.hole then
+			holePart = findHolePart(scene.hole.Position)
+			holeSize = if holePart then holePart.Size else nil
+		end
 		waitForArrival(player)
 		if released then
 			return
 		end
-		walkers = collectWalkers()
+		walkers = collectWalkers(scene)
 		showGui(playerGui)
 		playMusic(Config.Cutscene.Audio.MusicName, Config.Cutscene.Audio.MusicFadeInSeconds)
 		playMusic(Config.Cutscene.Audio.CutsceneMusicName, Config.Cutscene.Audio.MusicFadeInSeconds)

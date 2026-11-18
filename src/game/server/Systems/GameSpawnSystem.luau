@@ -506,7 +506,12 @@ local function cutsceneTimeout(): number
 	if typeof(hole) == "CFrame" and typeof(players) == "CFrame" then
 		walkSeconds = (hole.Position - players.Position).Magnitude / math.max(cutscene.WalkSpeed, 1)
 	end
-	local approachSeconds = (cutscene.StopDistance + (Config.Party.MaxSize - 1) * cutscene.LineSpacing) / math.max(cutscene.WalkSpeed, 1)
+	local collapse = cutscene.Collapse
+	local approachSeconds = cutscene.Gather.ApproachDistance / math.max(cutscene.Gather.CreepSpeed, 1)
+		+ collapse.Delay
+		+ collapse.RankDelay
+		+ collapse.CascadeStep * Config.Party.MaxSize
+		+ collapse.Jitter
 	local diveSeconds = cutscene.Fall.DiveDelay + cutscene.Fall.RiseSeconds + cutscene.Fall.PlungeSeconds
 	return cutscene.PanDownSeconds + walkSeconds + approachSeconds + diveSeconds + cutscene.HoldSeconds + Config.Party.MinLoadingSeconds + CUTSCENE_MARGIN
 end
