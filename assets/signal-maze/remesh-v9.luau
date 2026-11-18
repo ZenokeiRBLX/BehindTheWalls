@@ -10,22 +10,22 @@ local TV_TAG = "MonsterTV"
 local FLESH_TAG = "SignalMazeFlesh"
 local BACKUP_NAME = "SignalMaze_V9Backup"
 local OLD_VARIANT = "Flesh_WetFolds_V2"
-local VARIANT_NAME = "Flesh_Lumps_V9"
+local VARIANT_NAME = "Flesh_WetFolds_V9"
+local STALE_VARIANT = "Flesh_Lumps_V9"
 local SKIN_NAME = "FleshSkin"
 local COLLAR_NAME = "FleshCollar"
 local GLASS_NAME = "CrtGlass"
 local ROLL_NAME = "RollBar"
 
 local MESHES = {
-	Wall27 = { "rbxassetid://91902436901962", "rbxassetid://122935893228430" },
-	Wall51 = { "rbxassetid://87180627489987", "rbxassetid://119994533743548" },
-	Column = { "rbxassetid://96400586491073", "rbxassetid://72975452786060" },
-	Collar = { "rbxassetid://120258748207168", "rbxassetid://130241850805179" },
+	Wall27 = { "rbxassetid://98683797457305", "rbxassetid://105590144937639" },
+	Wall51 = { "rbxassetid://114534510554734", "rbxassetid://124352560621984" },
+	Column = { "rbxassetid://84485778794624", "rbxassetid://94700111830946" },
 }
 local TEXTURES = {
-	Color = "rbxassetid://133842902769997",
-	Normal = "rbxassetid://79057930927120",
-	Roughness = "rbxassetid://76510653129905",
+	Color = "rbxassetid://105091535236701",
+	Normal = "rbxassetid://82784481391315",
+	Roughness = "rbxassetid://124892855117012",
 	Static = "rbxassetid://79102717337929",
 	Red = "rbxassetid://132076644354660",
 	Overlay = "rbxassetid://127074494669484",
@@ -58,17 +58,11 @@ local WATER = {
 	WaterWaveSpeed = 2,
 }
 
-local FLESH_TINT = Color3.fromRGB(245, 225, 225)
+local FLESH_TINT = Color3.fromRGB(255, 244, 244)
 local FLESH_JITTER = 0.08
-local SLAB_TILE = 12
+local SLAB_TILE = 14
 local CEILING_COLOR = Color3.fromRGB(70, 46, 48)
 local FLOOR_COLOR = Color3.fromRGB(96, 60, 62)
-
-local COLLAR_NATIVE = Vector3.new(12, 9.2, 4)
-local COLLAR_INNER = Vector2.new(3.6, 2.7)
-local COLLAR_HOLE = 0.9
-local COLLAR_BASE = 3.3
-local COLLAR_LEAD = 0.3
 
 local STATIC_FRAME = 256
 local STATIC_GRID = 4
@@ -80,7 +74,7 @@ local RED_GUI_BRIGHTNESS = 2.2
 local ROLL_HEIGHT = 0.22
 local ROLL_TRANSPARENCY = 0.7
 
-local RED_LIGHT = { Color = Color3.fromRGB(255, 128, 104), Brightness = { 0.6, 0.9 } }
+local RED_LIGHT = { Color = Color3.fromRGB(255, 150, 128), Brightness = { 0.6, 0.9 } }
 local STATIC_LIGHT = { Color = Color3.fromRGB(186, 192, 208), Brightness = { 0.35, 0.5 } }
 local FILL = { Color = Color3.fromRGB(236, 204, 204), Brightness = 0.7, EntranceBrightness = 0.5 }
 
@@ -176,7 +170,12 @@ return function()
 	variant.NormalMap = TEXTURES.Normal
 	variant.RoughnessMap = TEXTURES.Roughness
 	variant.StudsPerTile = SLAB_TILE
+	variant.MaterialPattern = Enum.MaterialPattern.Organic
 	variant.Parent = oldVariant.Parent
+	local stale = MaterialService:FindFirstChild(STALE_VARIANT, true)
+	if stale then
+		stale:Destroy()
+	end
 	ceiling.MaterialVariant = VARIANT_NAME
 	ceiling.Color = CEILING_COLOR
 	ceiling.Transparency = 0
@@ -217,7 +216,7 @@ return function()
 	end
 
 	local collars, redScreens, staticScreens, lights = 0, 0, 0, 0
-	for index, tv in sortedByName(root.EmbeddedTVs:GetChildren()) do
+	for _, tv in sortedByName(root.EmbeddedTVs:GetChildren()) do
 		local glass = tv:FindFirstChild("BroadcastGlass")
 		local housing = tv:FindFirstChild("Housing")
 		if not (glass and housing and glass:IsA("BasePart") and housing:IsA("BasePart")) then
@@ -226,43 +225,8 @@ return function()
 		local old = tv:FindFirstChild(COLLAR_NAME)
 		if old then
 			old:Destroy()
+			collars += 1
 		end
-		local frame = glass.CFrame
-		local half = housing.Size / 2
-		local low = Vector3.new(math.huge, math.huge, math.huge)
-		local high = -low
-		for _, sx in { -1, 1 } do
-			for _, sy in { -1, 1 } do
-				for _, sz in { -1, 1 } do
-					local corner = housing.CFrame:PointToWorldSpace(Vector3.new(sx * half.X, sy * half.Y, sz * half.Z))
-					local p = frame:PointToObjectSpace(corner)
-					low = low:Min(p)
-					high = high:Max(p)
-				end
-			end
-		end
-		local extent = high - low
-		local top = low.Z - COLLAR_LEAD
-		local depth = COLLAR_BASE - top
-		local collar = templates.Collar[index % 2 + 1]:Clone()
-		collar.Name = COLLAR_NAME
-		collar.Size = Vector3.new(
-			extent.X * COLLAR_HOLE * COLLAR_NATIVE.X / (2 * COLLAR_INNER.X),
-			extent.Y * COLLAR_HOLE * COLLAR_NATIVE.Y / (2 * COLLAR_INNER.Y),
-			depth
-		)
-		collar.CFrame = frame
-			* CFrame.new((low.X + high.X) / 2, (low.Y + high.Y) / 2, top + depth / 2)
-			* CFrame.Angles(0, math.pi, 0)
-		collar.Anchored = true
-		collar.CanCollide = false
-		collar.CanTouch = false
-		collar.CanQuery = false
-		collar.CastShadow = false
-		collar.Material = Enum.Material.SmoothPlastic
-		skinOn(collar, shade(FLESH_TINT, FLESH_JITTER))
-		collar.Parent = tv
-		collars += 1
 
 		local gui = glass:FindFirstChild("Signal")
 		local red = gui and gui:FindFirstChild("RedSilhouette")
@@ -344,7 +308,7 @@ return function()
 
 	return {
 		meshes = meshCounts,
-		collars = collars,
+		collarsRemoved = collars,
 		redScreens = redScreens,
 		staticScreens = staticScreens,
 		screenLights = lights,

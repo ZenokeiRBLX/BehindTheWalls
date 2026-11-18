@@ -8,6 +8,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "v9")
 SIZE = 1024
 SEED = 20261117
+SEAM_BAND = 84
+SEAM_BORDER = 110
+SEAM_SIGMAS = (1, 2, 4, 8, 16)
+NORMAL_GAIN = 1.0
+MICRO_BUMP = 0.6
+COLOR_SATURATION = 1.05
+COLOR_GAMMA = 1.12
+COLOR_TINT = (0.96, 0.88, 0.9)
+ROUGH_WET = 0.05
+ROUGH_DRY = 0.17
 
 
 def periodic_field(rng, size, low, high):
@@ -28,52 +38,6 @@ def blur(image, sigma):
     fx = np.fft.fftfreq(size)[None, :]
     kernel = np.exp(-2 * (np.pi * sigma) ** 2 * (fx * fx + fy * fy))
     return np.real(np.fft.ifft2(np.fft.fft2(image) * kernel))
-
-
-def warp(image, dx, dy):
-    size = image.shape[0]
-    ys, xs = np.mgrid[0:size, 0:size].astype(np.float64)
-    sx = (xs + dx) % size
-    sy = (ys + dy) % size
-    x0 = np.floor(sx).astype(int)
-    y0 = np.floor(sy).astype(int)
-    tx = sx - x0
-    ty = sy - y0
-    x1 = (x0 + 1) % size
-    y1 = (y0 + 1) % size
-    a = image[y0, x0] * (1 - tx) + image[y0, x1] * tx
-    b = image[y1, x0] * (1 - tx) + image[y1, x1] * tx
-    return a * (1 - ty) + b * ty
-
-
-def blobs(rng, size, count, radius_range, height_scale, field=None, bias=None):
-    height = np.full((size, size), -1.0)
-    for _ in range(count):
-        cx = rng.uniform(0, size)
-        cy = rng.uniform(0, size)
-        if bias is not None:
-            for _ in range(6):
-                if rng.uniform() < bias[int(cy) % size, int(cx) % size]:
-                    break
-                cx = rng.uniform(0, size)
-                cy = rng.uniform(0, size)
-        r = rng.uniform(*radius_range)
-        stretch = rng.uniform(0.75, 1.3)
-        angle = rng.uniform(0, np.pi)
-        extent = int(np.ceil(r * max(stretch, 1 / stretch))) + 2
-        ys = np.arange(int(cy) - extent, int(cy) + extent + 1)
-        xs = np.arange(int(cx) - extent, int(cx) + extent + 1)
-        gx, gy = np.meshgrid(xs - cx, ys - cy)
-        ca, sa = np.cos(angle), np.sin(angle)
-        u = (gx * ca + gy * sa) / (r * stretch)
-        v = (-gx * sa + gy * ca) / (r / stretch)
-        d2 = u * u + v * v
-        dome = np.sqrt(np.clip(1 - d2, 0, None)) * r * height_scale
-        dome[d2 >= 1] = -1.0
-        iy = (ys % size)[:, None]
-        ix = (xs % size)[None, :]
-        height[iy, ix] = np.maximum(height[iy, ix], dome)
-    return height
 
 
 def normalize(a):
@@ -97,61 +61,99 @@ def save(array, name, mode="RGB"):
     Image.fromarray(data, mode).save(os.path.join(OUT, name), optimize=True)
 
 
+def load_source(name):
+    path = os.path.join(HERE, "..", "flesh-wall-rig", name)
+    image = Image.open(path).convert("RGB").resize((SIZE, SIZE), Image.LANCZOS)
+    return np.asarray(image).astype(np.float64) / 255
+
+
+def roll(image, dx, dy):
+    return np.roll(np.roll(image, dy, 0), dx, 1)
+
+
+def segment_distance(x, y, ax, ay, bx, by):
+    px, py = x - ax, y - ay
+    vx, vy = bx - ax, by - ay
+    t = np.clip((px * vx + py * vy) / (vx * vx + vy * vy), 0, 1)
+    return np.sqrt((px - t * vx) ** 2 + (py - t * vy) ** 2)
+
+
+def seam_masks(rng):
+    s = SIZE
+    y, x = np.mgrid[0:s, 0:s].astype(np.float64)
+    wobble = periodic_field(rng, s, 3, 14) * 0.45
+    cross = np.minimum(np.abs(x - s / 2), np.abs(y - s / 2))
+    border = np.minimum(np.minimum(x, y), np.minimum(s - 1 - x, s - 1 - y))
+    first = ((1 - cross / SEAM_BAND + wobble) > 0.5) & (border > SEAM_BORDER * (0.65 + 0.3 * wobble))
+    q = s / 4
+    reach = SEAM_BORDER
+    spots = np.minimum(
+        segment_distance(x, y, 3 * q, q - reach, 3 * q, q + reach),
+        segment_distance(x, y, q - reach, 3 * q, q + reach, 3 * q),
+    )
+    second = (1 - spots / SEAM_BAND + wobble) > 0.5
+    return first.astype(np.float64), second.astype(np.float64)
+
+
+def blur_channels(image, sigma):
+    return np.stack([blur(image[..., c], sigma) for c in range(image.shape[-1])], -1)
+
+
+def band_blend(a, b, mask):
+    out = np.zeros_like(a)
+    low_a, low_b = a, b
+    for sigma in SEAM_SIGMAS:
+        next_a = blur_channels(a, sigma)
+        next_b = blur_channels(b, sigma)
+        soft = np.clip(blur(mask, sigma), 0, 1)[..., None]
+        out += (low_a - next_a) * (1 - soft) + (low_b - next_b) * soft
+        low_a, low_b = next_a, next_b
+    soft = np.clip(blur(mask, SEAM_SIGMAS[-1] * 1.5), 0, 1)[..., None]
+    return out + low_a * (1 - soft) + low_b * soft
+
+
+def make_seamless(image, masks):
+    s = SIZE
+    first, second = masks
+    healed = band_blend(roll(image, s // 2, s // 2), image, first)
+    return band_blend(roll(healed, s // 4, s // 4), roll(healed, 3 * s // 4, s // 4), second)
+
+
+def wrap_error(image):
+    inner = np.abs(image[:, 1:] - image[:, :-1]).mean() + np.abs(image[1:] - image[:-1]).mean()
+    wrap = np.abs(image[:, 0] - image[:, -1]).mean() + np.abs(image[0] - image[-1]).mean()
+    return wrap / inner
+
+
 def flesh():
     rng = np.random.default_rng(SEED)
     s = SIZE
-    lobes = blobs(rng, s, 46, (70, 150), 0.55)
-    mids = blobs(rng, s, 260, (22, 52), 0.75)
-    crease = 1 - normalize(np.maximum(lobes, 0))
-    nodules = blobs(rng, s, 900, (6, 15), 0.9, bias=crease)
-    base = np.maximum(np.maximum(lobes, 0), 0)
-    height = np.maximum(base, mids * 0.9)
-    height = np.maximum(height, nodules * 0.8)
-    height = np.where(height < 0, 0, height)
-    height = blur(height, 2.2)
-    height = normalize(height)
+    masks = seam_masks(rng)
+    color_source = load_source("flesh-color-v2.png")
+    normal_source = load_source("flesh-normal-v2.png")
+    color = make_seamless(color_source, masks)
+    vectors = make_seamless(normal_source * 2 - 1, masks)
+    print("color wrap/inner %.2f -> %.2f" % (wrap_error(color_source), wrap_error(color)))
+    print("normal wrap/inner %.2f -> %.2f" % (wrap_error(normal_source), wrap_error(vectors * 0.5 + 0.5)))
 
-    wx = periodic_field(rng, s, 2, 9) * 38
-    wy = periodic_field(rng, s, 2, 9) * 38
-    vein_field = warp(periodic_field(rng, s, 6, 26), wx, wy)
-    veins = np.clip(1 - np.abs(vein_field) * 9, 0, 1) ** 3
-    fine_veins = np.clip(1 - np.abs(warp(periodic_field(rng, s, 20, 70), wx * 0.5, wy * 0.5)) * 7, 0, 1) ** 4
-    pores = periodic_field(rng, s, 120, 260)
-    mottle = periodic_field(rng, s, 1, 6)
-    patches = smoothstep(0.35, 0.75, periodic_field(rng, s, 2, 8))
+    micro = periodic_field(rng, s, 170, 420)
+    mx = (np.roll(micro, -1, 1) - np.roll(micro, 1, 1)) * 0.5
+    my = (np.roll(micro, -1, 0) - np.roll(micro, 1, 0)) * 0.5
+    vectors[..., 0] = vectors[..., 0] * NORMAL_GAIN - mx * MICRO_BUMP
+    vectors[..., 1] = vectors[..., 1] * NORMAL_GAIN + my * MICRO_BUMP
+    vectors[..., 2] = np.clip(vectors[..., 2], 0.05, None)
+    vectors /= np.sqrt((vectors ** 2).sum(-1, keepdims=True))
+    save(vectors * 0.5 + 0.5, "flesh-normal.png")
 
-    relief = height + veins * 0.018 + fine_veins * 0.008 + pores * 0.012
-    cavity = relief - blur(relief, 18)
-    cavity = np.clip(cavity / (np.abs(cavity).max() + 1e-9), -1, 1)
+    luma = color @ np.array([0.3, 0.59, 0.11])
+    mean = color.mean(-1, keepdims=True)
+    graded = mean + (color - mean) * COLOR_SATURATION
+    graded = np.clip(graded, 0, 1) ** COLOR_GAMMA * np.array(COLOR_TINT)
+    save(np.clip(graded, 0, 1), "flesh-color.png")
 
-    dx = (np.roll(relief, -1, 1) - np.roll(relief, 1, 1)) * 0.5
-    dy = (np.roll(relief, -1, 0) - np.roll(relief, 1, 0)) * 0.5
-    strength = 26.0
-    nx = -dx * strength
-    ny = dy * strength
-    nz = np.ones_like(nx)
-    length = np.sqrt(nx * nx + ny * ny + nz * nz)
-    normal = np.stack([nx / length, ny / length, nz / length], -1) * 0.5 + 0.5
-    save(normal, "flesh-normal.png")
-
-    deep = np.array([0.24, 0.06, 0.07])
-    meat = np.array([0.58, 0.22, 0.23])
-    swell = np.array([0.76, 0.40, 0.39])
-    pale = np.array([0.86, 0.62, 0.58])
-    vein = np.array([0.32, 0.05, 0.12])
-    t = np.clip(relief * 0.9 + cavity * 0.35, 0, 1)
-    color = mix(deep[None, None, :] * np.ones((s, s, 3)), np.broadcast_to(meat, (s, s, 3)), smoothstep(0.02, 0.45, t))
-    color = mix(color, np.broadcast_to(swell, (s, s, 3)), smoothstep(0.55, 1.0, t) * 0.75)
-    color = mix(color, np.broadcast_to(pale, (s, s, 3)), patches * smoothstep(0.5, 0.9, t) * 0.45)
-    color = mix(color, np.broadcast_to(vein, (s, s, 3)), np.clip(veins * 0.32 + fine_veins * 0.16, 0, 1))
-    color *= (1 + mottle[..., None] * 0.14)
-    color *= (0.84 + 0.16 * smoothstep(-0.6, 0.25, cavity))[..., None]
-    save(np.clip(color, 0, 1), "flesh-color.png")
-
-    rough = 0.2 - relief * 0.06 - np.clip(-cavity, 0, 1) * 0.1 + patches * 0.12 + veins * 0.08
-    rough += periodic_field(rng, s, 40, 140) * 0.04
-    rough = np.clip(rough, 0.05, 0.6)
-    save(np.repeat(rough[..., None], 3, -1), "flesh-roughness.png")
+    ridge = smoothstep(0.25, 0.75, normalize(blur(luma, 3)))
+    rough = ROUGH_WET + (ROUGH_DRY - ROUGH_WET) * ridge + micro * 0.015
+    save(np.repeat(np.clip(rough, 0.04, 0.6)[..., None], 3, -1), "flesh-roughness.png")
 
 
 def static_atlas():

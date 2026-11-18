@@ -1,6 +1,6 @@
 # Signal maze mock map
 
-The current Map Creation build is version 8; see [MOOD-V8.md](MOOD-V8.md), which builds on [SIZED-V7.md](SIZED-V7.md), [VARY-V6.md](VARY-V6.md), [POPULATE-V5.md](POPULATE-V5.md), [REFINE-V4.md](REFINE-V4.md) and [REBUILD-V3.md](REBUILD-V3.md). The notes below describe earlier builds.
+The current Map Creation build is version 10; see [LIGHT-V10.md](LIGHT-V10.md), which builds on [REMESH-V9.md](REMESH-V9.md), [MOOD-V8.md](MOOD-V8.md), [SIZED-V7.md](SIZED-V7.md), [VARY-V6.md](VARY-V6.md), [POPULATE-V5.md](POPULATE-V5.md), [REFINE-V4.md](REFINE-V4.md) and [REBUILD-V3.md](REBUILD-V3.md). The notes below describe earlier builds.
 
 Built in the open **Map Creation** Roblox Studio place (`126262358232325`). The map is Studio-owned at `Workspace.TheSignalMaze`; save that place to retain the geometry and lighting. These files are reference assets, not a Rojo map export.
 
@@ -10,7 +10,7 @@ Built in the open **Map Creation** Roblox Studio place (`126262358232325`). The 
 - All 576 cells and the exit passed a 4 x 5 stud player clearance check. Spawn and forward movement were verified in a first-person Studio playtest.
 - Original TV, wall and rig models are in `ServerStorage.SignalMaze_OriginalAssets`, alongside the original lighting instances.
 - `Architecture.RemovableCeiling` can be temporarily hidden for overhead editing.
-- TV broadcasts are static graphics. No runtime scripts were added.
+- TV broadcasts were static graphics with no runtime scripts until version 9, which animates them and the flesh from `SignalMazeController`.
 
 `crt-atlas.png` is the generated source texture. Its uploaded Roblox image is `rbxassetid://125278888728934`; the uploaded atlas uses two 512 x 512 regions, with the red broadcast at offset (512, 0).
 

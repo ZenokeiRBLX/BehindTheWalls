@@ -30,11 +30,22 @@ local function gameControllers(): { Controller }
 		require(Game:WaitForChild("FlashlightController")),
 		require(Game:WaitForChild("HudController")),
 		require(Game:WaitForChild("IntroHoleController")),
+		require(Game:WaitForChild("SignalMazeController")),
+	}
+end
+
+local function mapCreationControllers(): { Controller }
+	local Game = Controllers:WaitForChild("Game")
+	return {
+		require(Game:WaitForChild("SignalMazeController")),
 	}
 end
 
 function ControllerRegistry.start()
-	local controllers = if Config.isGamePlace() then gameControllers() else lobbyControllers()
+	local controllers = if Config.isGamePlace()
+		then gameControllers()
+		elseif Config.isMapCreationPlace() then mapCreationControllers()
+		else lobbyControllers()
 	for _, controller in controllers do
 		if controller.start then
 			controller.start()

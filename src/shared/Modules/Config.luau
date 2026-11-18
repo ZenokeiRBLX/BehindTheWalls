@@ -14,6 +14,10 @@ function Config.isGamePlace(): boolean
 	return game.PlaceId == PlaceIds.Game
 end
 
+function Config.isMapCreationPlace(): boolean
+	return game.PlaceId == PlaceIds.MapCreation
+end
+
 Config.Party = {
 	MinSize = 1,
 	MaxSize = 5,
@@ -442,6 +446,50 @@ Config.Hud = {
 				Lit = { "On" },
 			},
 		},
+	},
+}
+
+Config.SignalMaze = {
+	FleshTag = "SignalMazeFlesh",
+	ScreenTag = "MonsterTV",
+	UpdateRate = 30,
+	Flesh = {
+		Radius = 110,
+		BreathAmplitude = 0.2,
+		BreathSeconds = 5.5,
+		WaveLength = 70,
+		PulseAmplitude = 0.12,
+		PulseSeconds = 2.8,
+		PulseTravelSpeed = 90,
+		SquirmAmplitude = 0.12,
+		SquirmSeconds = 7.5,
+		TwistDegrees = 1.1,
+	},
+	Screens = {
+		Radius = 120,
+		ResolveSeconds = 1,
+		GlassName = "BroadcastGlass",
+		GuiName = "Signal",
+		StaticName = "Static",
+		RedName = "RedSilhouette",
+		RollName = "RollBar",
+		StaticFrame = 256,
+		StaticGrid = 4,
+		StaticFps = 14,
+		RedFrame = 512,
+		RedGrid = 2,
+		RedFps = 7,
+		RollSeconds = { 4, 9 },
+		FlickerDepth = 0.2,
+		FlickerSpeed = 7,
+		DropChancePerSecond = 0.05,
+		DropSeconds = { 0.05, 0.22 },
+		DropBrightness = 0.25,
+	},
+	Shadows = {
+		Count = 6,
+		Radius = 70,
+		RefreshSeconds = 0.3,
 	},
 }
 

@@ -1,40 +1,39 @@
 local AssetService = game:GetService("AssetService")
 local HttpService = game:GetService("HttpService")
+local ServerStorage = game:GetService("ServerStorage")
 
-local SEED = 20261117
+local SEED = 20261118
 local HEIGHT = 34
-local CORE = 0.55
-local COLUMN_CORE = 0.6
+local CORE = 1.25
+local COLUMN_CORE = 0.62
 local SPACING = 0.66
 local BONE_SPREAD = 0.4
-local BLEND = 1.1
-local BASE_LIFT = 1.4
+local BLEND = 1.6
+local BASE_LIFT = 1.1
+local TILE = 14
+local UV_WARP = 1.3
+local PREVIEW_NAME = "SignalMazeV9_MeshPreview"
 local ROWS = { "Lower", "Middle", "Upper" }
 local COLUMNS = { "Left", "Center", "Right" }
-local COLLAR_SIZE = Vector3.new(12, 9.2, 4)
-local COLLAR_INNER = Vector2.new(3.6, 2.7)
-local COLLAR_CELLS = Vector2.new(44, 33)
 
 type Spec = {
 	name: string,
-	kind: "wall" | "column" | "collar",
+	kind: "wall" | "column",
 	size: Vector3,
 	seed: number,
-	tile: number,
 }
 
 local SPECS: { Spec } = {
-	{ name = "FleshWall27_A", kind = "wall", size = Vector3.new(27, HEIGHT, 6), seed = SEED + 1, tile = 10 },
-	{ name = "FleshWall27_B", kind = "wall", size = Vector3.new(27, HEIGHT, 6), seed = SEED + 2, tile = 10 },
-	{ name = "FleshWall51_A", kind = "wall", size = Vector3.new(51, HEIGHT, 6), seed = SEED + 3, tile = 10 },
-	{ name = "FleshWall51_B", kind = "wall", size = Vector3.new(51, HEIGHT, 6), seed = SEED + 4, tile = 10 },
-	{ name = "FleshColumn_A", kind = "column", size = Vector3.new(10.5, HEIGHT, 8.5), seed = SEED + 5, tile = 10 },
-	{ name = "FleshColumn_B", kind = "column", size = Vector3.new(10.5, HEIGHT, 8.5), seed = SEED + 6, tile = 10 },
-	{ name = "FleshCollar_A", kind = "collar", size = COLLAR_SIZE, seed = SEED + 7, tile = 10 },
-	{ name = "FleshCollar_B", kind = "collar", size = COLLAR_SIZE, seed = SEED + 8, tile = 10 },
+	{ name = "FleshWall27_A", kind = "wall", size = Vector3.new(27, HEIGHT, 6), seed = SEED + 1 },
+	{ name = "FleshWall27_B", kind = "wall", size = Vector3.new(27, HEIGHT, 6), seed = SEED + 2 },
+	{ name = "FleshWall51_A", kind = "wall", size = Vector3.new(51, HEIGHT, 6), seed = SEED + 3 },
+	{ name = "FleshWall51_B", kind = "wall", size = Vector3.new(51, HEIGHT, 6), seed = SEED + 4 },
+	{ name = "FleshColumn_A", kind = "column", size = Vector3.new(10.5, HEIGHT, 8.5), seed = SEED + 5 },
+	{ name = "FleshColumn_B", kind = "column", size = Vector3.new(10.5, HEIGHT, 8.5), seed = SEED + 6 },
 }
 
 type Blob = { x: number, y: number, rx: number, ry: number, c: number, s: number, h: number }
+type Field = (number, number) -> number
 
 local function smoothstep(e0: number, e1: number, x: number): number
 	local t = math.clamp((x - e0) / (e1 - e0), 0, 1)
@@ -46,52 +45,8 @@ local function smax(a: number, b: number, k: number): number
 	return math.max(a, b) + h * h * k * 0.25
 end
 
-local function makeBlobs(rng: Random, width: number, height: number, wrapX: boolean): ({ Blob }, (number, number) -> number)
-	local area = width * height
-	local list: { Blob } = {}
-	local waves = {}
-	for i = 1, 4 do
-		waves[i] = {
-			fx = (if wrapX then math.round(rng:NextNumber(1, 2.5)) * 2 * math.pi / width else rng:NextNumber(0.08, 0.2)),
-			fy = rng:NextNumber(0.06, 0.18),
-			p = rng:NextNumber(0, 2 * math.pi),
-		}
-	end
-	local function mass(x: number, y: number): number
-		local m = 0
-		for _, w in waves do
-			m += math.sin(x * w.fx + y * w.fy + w.p)
-		end
-		return 0.5 + m / 8
-	end
-	local function add(count: number, rMin: number, rMax: number, lift: number, sag: boolean)
-		for _ = 1, count do
-			local r = rng:NextNumber(rMin, rMax)
-			local stretch = if sag then rng:NextNumber(1.8, 2.8) else rng:NextNumber(0.8, 1.25)
-			local angle = if sag then rng:NextNumber(-0.25, 0.25) else rng:NextNumber(0, math.pi)
-			local x = rng:NextNumber(-width / 2, width / 2)
-			local y = rng:NextNumber(-height / 2, height / 2)
-			local m = mass(x, y)
-			table.insert(list, {
-				x = x,
-				y = y,
-				rx = r / math.sqrt(stretch),
-				ry = r * math.sqrt(stretch),
-				c = math.cos(angle),
-				s = math.sin(angle),
-				h = r * lift * (0.35 + 0.9 * m),
-			})
-		end
-	end
-	add(math.floor(area / 34), 3, 6, 0.5, false)
-	add(math.floor(area / 20), 1.4, 2.6, 0.7, false)
-	add(math.floor(area / 60), 0.8, 1.3, 0.8, true)
-	add(math.floor(area / 24), 0.8, 1.3, 0.75, false)
-	return list, mass
-end
-
-local function sampler(list: { Blob }, width: number, wrapX: boolean, mass: (number, number) -> number): (number, number) -> number
-	local cell = 5
+local function bucketed(list: { Blob }, width: number, wrapX: boolean): (number, number) -> { Blob }?
+	local cell = 6
 	local buckets: { [number]: { Blob } } = {}
 	local function key(ix: number, iy: number): number
 		return ix * 4096 + iy
@@ -113,22 +68,93 @@ local function sampler(list: { Blob }, width: number, wrapX: boolean, mass: (num
 			insert(blob, -width)
 		end
 	end
+	return function(x: number, y: number): { Blob }?
+		return buckets[key(math.floor(x / cell), math.floor(y / cell))]
+	end
+end
+
+local function bell(b: Blob, x: number, y: number): number
+	local dx = x - b.x
+	local dy = y - b.y
+	local u = (dx * b.c + dy * b.s) / b.rx
+	local v = (-dx * b.s + dy * b.c) / b.ry
+	local d2 = u * u + v * v
+	if d2 >= 1 then
+		return 0
+	end
+	local f = 1 - d2
+	return b.h * f * f
+end
+
+local function makeField(rng: Random, width: number, height: number, wrapX: boolean): Field
+	local area = width * height
+	local turns = 2 * math.pi / width
+	local waves = {}
+	for i = 1, 4 do
+		waves[i] = {
+			fx = if wrapX then rng:NextInteger(1, 2) * turns else rng:NextNumber(0.07, 0.17),
+			fy = rng:NextNumber(0.05, 0.15),
+			p = rng:NextNumber(0, 2 * math.pi),
+		}
+	end
+	local function mass(x: number, y: number): number
+		local m = 0
+		for _, w in waves do
+			m += math.sin(x * w.fx + y * w.fy + w.p)
+		end
+		return 0.5 + m / 8
+	end
+	local lumps: { Blob } = {}
+	local pits: { Blob } = {}
+	local function add(list: { Blob }, count: number, rMin: number, rMax: number, lift: number, stretchMin: number, stretchMax: number, lean: number)
+		for _ = 1, count do
+			local r = rng:NextNumber(rMin, rMax)
+			local stretch = rng:NextNumber(stretchMin, stretchMax)
+			local angle = rng:NextNumber(-lean, lean)
+			local x = rng:NextNumber(-width / 2, width / 2)
+			local y = rng:NextNumber(-height / 2, height / 2)
+			table.insert(list, {
+				x = x,
+				y = y,
+				rx = r / math.sqrt(stretch),
+				ry = r * math.sqrt(stretch),
+				c = math.cos(angle),
+				s = math.sin(angle),
+				h = r * lift * (0.4 + 0.9 * mass(x, y)),
+			})
+		end
+	end
+	add(lumps, math.floor(area / 42), 3.6, 6.4, 0.42, 1.2, 2.4, 0.35)
+	add(lumps, math.floor(area / 24), 1.9, 3.2, 0.55, 1.1, 2.2, 0.5)
+	add(lumps, math.floor(area / 48), 1, 1.6, 0.6, 0.9, 1.4, 1.5)
+	add(pits, math.floor(area / 60), 0.8, 1.4, 0.32, 0.9, 1.6, 1.5)
+	local lumpsAt = bucketed(lumps, width, wrapX)
+	local pitsAt = bucketed(pits, width, wrapX)
+	local phases = { rng:NextNumber(0, 6.28), rng:NextNumber(0, 6.28), rng:NextNumber(0, 6.28) }
+	local sway = if wrapX then 2 * turns else 0.19
 	return function(x: number, y: number): number
-		local bucket = buckets[key(math.floor(x / cell), math.floor(y / cell))]
-		local value = BASE_LIFT * mass(x, y) ^ 1.4
+		local wx = x + 1.5 * math.sin(y * 0.21 + phases[1]) + 0.7 * math.sin(y * 0.47 + phases[2])
+		local wy = y + 1.1 * math.sin(x * sway + phases[3])
+		if wrapX then
+			wx = (wx + width / 2) % width - width / 2
+		end
+		local value = BASE_LIFT * mass(wx, wy)
+		local bucket = lumpsAt(wx, wy)
 		if bucket then
 			for _, b in bucket do
-				local dx = x - b.x
-				local dy = y - b.y
-				local u = (dx * b.c + dy * b.s) / b.rx
-				local v = (-dx * b.s + dy * b.c) / b.ry
-				local d2 = u * u + v * v
-				if d2 < 1 then
-					value = smax(value, b.h * math.sqrt(1 - d2), BLEND)
+				local h = bell(b, wx, wy)
+				if h > 0 then
+					value = smax(value, h, BLEND)
 				end
 			end
 		end
-		return value
+		bucket = pitsAt(wx, wy)
+		if bucket then
+			for _, b in bucket do
+				value -= bell(b, wx, wy)
+			end
+		end
+		return math.max(value, 0)
 	end
 end
 
@@ -166,31 +192,32 @@ local function buildWall(spec: Spec): Geometry
 	local relief = size.Z / 2 - CORE
 	local grids = {}
 	for side = 1, 2 do
-		local list, mass = makeBlobs(rng, size.X + 4, size.Y, false)
-		local field = sampler(list, size.X + 4, false, mass)
+		local field = makeField(rng, size.X + 4, size.Y, false)
 		local sign = if side == 1 then 1 else -1
+		local a, b = rng:NextNumber(0, 6.28), rng:NextNumber(0, 6.28)
 		local grid = {}
-		local maxZ = 0
+		local maxZ = CORE
 		for j = 0, ny do
 			grid[j] = {}
 			for i = 0, nx do
 				local x = (i / nx - 0.5) * size.X
 				local y = (j / ny - 0.5) * size.Y
-				local edge = math.min(i, nx - i, j, ny - j)
-				local fade = if edge == 0 then 0 else smoothstep(0, 1.2, math.min(size.X / 2 - math.abs(x), size.Y / 2 - math.abs(y)) + 0.35)
-				local h = field(x, y)
-				local z = CORE + relief * math.tanh(h / relief) * fade
+				local inset = math.min(size.X / 2 - math.abs(x), size.Y / 2 - math.abs(y))
+				local fade = if inset <= 1e-6 then 0 else smoothstep(0, 1.6, inset + 0.3)
+				local z = CORE + relief * math.tanh(field(x, y) / relief) * fade
 				maxZ = math.max(maxZ, z)
 				grid[j][i] = { x, y, z }
 			end
 		end
-		local scale = (size.Z / 2 - CORE) / (maxZ - CORE)
+		local scale = relief / (maxZ - CORE)
 		for j = 0, ny do
 			for i = 0, nx do
 				local g = grid[j][i]
-				local z = if i == 0 or i == nx or j == 0 or j == ny then CORE else CORE + (g[3] - CORE) * scale
-				table.insert(positions, Vector3.new(g[1], g[2], z * sign))
-				table.insert(uvs, Vector2.new(sign * g[1] / spec.tile, 1 - g[2] / spec.tile))
+				table.insert(positions, Vector3.new(g[1], g[2], (CORE + (g[3] - CORE) * scale) * sign))
+				table.insert(uvs, Vector2.new(
+					(sign * g[1] + UV_WARP * math.sin(g[2] * 0.23 + a)) / TILE,
+					1 - (g[2] + UV_WARP * math.sin(g[1] * 0.19 + b)) / TILE
+				))
 				grid[j][i] = #positions
 			end
 		end
@@ -245,11 +272,12 @@ local function buildColumn(spec: Spec): Geometry
 	local a, b = size.X / 2, size.Z / 2
 	local radius = (a + b) / 2
 	local circumference = 2 * math.pi * radius
+	local repeats = math.max(1, math.round(circumference / TILE))
 	local nt = 48
 	local ny = math.max(8, math.round(size.Y / SPACING))
-	local list, mass = makeBlobs(rng, circumference, size.Y, true)
-	local field = sampler(list, circumference, true, mass)
+	local field = makeField(rng, circumference, size.Y, true)
 	local relief = radius * (1 - COLUMN_CORE)
+	local phase = rng:NextNumber(0, 6.28)
 	local positions: { Vector3 } = {}
 	local uvs: { Vector2 } = {}
 	local raw = {}
@@ -259,7 +287,7 @@ local function buildColumn(spec: Spec): Geometry
 		for i = 0, nt - 1 do
 			local theta = i / nt * 2 * math.pi
 			local y = (j / ny - 0.5) * size.Y
-			local h = field(theta * radius, y)
+			local h = field(theta * radius - circumference / 2, y)
 			local r = radius * COLUMN_CORE + relief * math.tanh(h / relief)
 			local x = math.cos(theta) * r * (a / radius)
 			local z = math.sin(theta) * r * (b / radius)
@@ -268,19 +296,25 @@ local function buildColumn(spec: Spec): Geometry
 			raw[j][i] = { x, y, z, theta }
 		end
 	end
+	local function uvAt(theta: number, y: number): Vector2
+		return Vector2.new(
+			theta / (2 * math.pi) * repeats + UV_WARP * math.sin(y * 0.23 + phase) / TILE,
+			1 - (y + UV_WARP * math.sin(2 * theta + phase)) / TILE
+		)
+	end
 	local grid = {}
 	for j = 0, ny do
 		grid[j] = {}
 		for i = 0, nt - 1 do
 			local g = raw[j][i]
 			table.insert(positions, Vector3.new(g[1] * a / maxX, g[2], g[3] * b / maxZ))
-			table.insert(uvs, Vector2.new(g[4] * radius / spec.tile, 1 - g[2] / spec.tile))
+			table.insert(uvs, uvAt(g[4], g[2]))
 			grid[j][i] = #positions
 		end
 	end
 	local seamUvs = {}
 	for j = 0, ny do
-		table.insert(uvs, Vector2.new(circumference / spec.tile, 1 - raw[j][0][2] / spec.tile))
+		table.insert(uvs, uvAt(2 * math.pi, raw[j][0][2]))
 		seamUvs[j] = #uvs
 	end
 	local tris: { { number } } = {}
@@ -310,7 +344,7 @@ local function buildColumn(spec: Spec): Geometry
 		local j, dir = cap[1], cap[2]
 		local y = (j / ny - 0.5) * size.Y
 		table.insert(positions, Vector3.new(0, y, 0))
-		table.insert(uvs, Vector2.new(0, 1 - y / spec.tile))
+		table.insert(uvs, Vector2.new(0.5, 1 - y / TILE))
 		local center = #positions
 		for i = 0, nt - 1 do
 			local i2 = (i + 1) % nt
@@ -320,108 +354,21 @@ local function buildColumn(spec: Spec): Geometry
 	return { positions = positions, uvs = uvs, tris = tris, triUvs = triUvs }
 end
 
-local function buildCollar(spec: Spec): Geometry
-	local size = spec.size
-	local rng = Random.new(spec.seed)
-	local half = Vector2.new(size.X / 2, size.Y / 2)
-	local list: { Blob } = {}
-	for _ = 1, 70 do
-		local r = rng:NextNumber(0.4, 1.0)
-		local stretch = rng:NextNumber(0.8, 1.3)
-		local angle = rng:NextNumber(0, math.pi)
-		table.insert(list, {
-			x = rng:NextNumber(-half.X, half.X),
-			y = rng:NextNumber(-half.Y, half.Y),
-			rx = r / math.sqrt(stretch),
-			ry = r * math.sqrt(stretch),
-			c = math.cos(angle),
-			s = math.sin(angle),
-			h = r * rng:NextNumber(0.6, 1.0),
-		})
-	end
-	local field = sampler(list, size.X, false, function()
-		return 0
-	end)
-	local function outside(x: number, y: number): number
-		local dx = math.max(math.abs(x) - COLLAR_INNER.X, 0)
-		local dy = math.max(math.abs(y) - COLLAR_INNER.Y, 0)
-		return math.sqrt(dx * dx + dy * dy)
-	end
-	local band = math.min(half.X - COLLAR_INNER.X, half.Y - COLLAR_INNER.Y)
-	local nx, ny = COLLAR_CELLS.X, COLLAR_CELLS.Y
-	local positions: { Vector3 } = {}
-	local uvs: { Vector2 } = {}
-	local grid = {}
-	for j = 0, ny do
-		grid[j] = {}
-		for i = 0, nx do
-			local x = (i / nx - 0.5) * size.X
-			local y = (j / ny - 0.5) * size.Y
-			local d = outside(x, y)
-			local edge = math.min(half.X - math.abs(x), half.Y - math.abs(y))
-			local lumps = math.tanh(field(x, y) / 0.6)
-			local reach = band * (0.62 + 0.38 * lumps)
-			local t = math.clamp(d / reach, 0, 1)
-			local dome = math.sqrt(math.max(0, 1 - t * t))
-			local z = size.Z * math.clamp(0.78 * dome + 0.3 * lumps * dome, 0, 1)
-			if edge <= 1e-6 then
-				z = 0
-			end
-			table.insert(positions, Vector3.new(x, y, z - size.Z / 2))
-			table.insert(uvs, Vector2.new(x / spec.tile, 1 - y / spec.tile))
-			grid[j][i] = { #positions, d, z }
-		end
-	end
-	local tris: { { number } } = {}
-	local out = Vector3.new(0, 0, 1)
-	local function tri(a: number, b: number, c: number)
-		local n = (positions[b] - positions[a]):Cross(positions[c] - positions[a])
-		if n:Dot(out) < 0 then
-			b, c = c, b
-		end
-		table.insert(tris, { a, b, c })
-	end
-	for j = 0, ny - 1 do
-		for i = 0, nx - 1 do
-			local a, b, c, d = grid[j][i], grid[j][i + 1], grid[j + 1][i + 1], grid[j + 1][i]
-			local raised = a[3] > 0.01 or b[3] > 0.01 or c[3] > 0.01 or d[3] > 0.01
-			if raised and (a[2] > 0 or b[2] > 0 or c[2] > 0 or d[2] > 0) then
-				tri(a[1], b[1], c[1])
-				tri(a[1], c[1], d[1])
-			end
-		end
-	end
-	local maxZ = -math.huge
-	for _, p in positions do
-		maxZ = math.max(maxZ, p.Z)
-	end
-	local stretch = size.Z / (maxZ + size.Z / 2)
-	for index, p in positions do
-		positions[index] = Vector3.new(p.X, p.Y, (p.Z + size.Z / 2) * stretch - size.Z / 2)
-	end
-	return { positions = positions, uvs = uvs, tris = tris }
-end
-
 local function toEditable(spec: Spec, geometry: Geometry): EditableMesh
 	local mesh = AssetService:CreateEditableMesh({ FixedSize = false })
 	assert(mesh, "EditableMesh creation failed")
-	local rigged = spec.kind ~= "collar"
 	local names, bonePositions = boneLayout(spec.size)
 	local boneIds = {}
-	if rigged then
-		for index, name in names do
-			boneIds[index] = mesh:AddBone({ Name = name, CFrame = CFrame.new(bonePositions[index]), Virtual = false })
-		end
+	for index, name in names do
+		boneIds[index] = mesh:AddBone({ Name = name, CFrame = CFrame.new(bonePositions[index]), Virtual = false })
 	end
 	local vertexIds = {}
 	for index, p in geometry.positions do
 		local id = mesh:AddVertex(p)
 		vertexIds[index] = id
-		if rigged then
-			local slots, weights = skin(spec.size, p)
-			mesh:SetVertexBones(id, { boneIds[slots[1]], boneIds[slots[2]], boneIds[slots[3]], boneIds[slots[4]] })
-			mesh:SetVertexBoneWeights(id, weights)
-		end
+		local slots, weights = skin(spec.size, p)
+		mesh:SetVertexBones(id, { boneIds[slots[1]], boneIds[slots[2]], boneIds[slots[3]], boneIds[slots[4]] })
+		mesh:SetVertexBoneWeights(id, weights)
 	end
 	local uvIds = {}
 	for index, uv in geometry.uvs do
@@ -436,20 +383,17 @@ local function toEditable(spec: Spec, geometry: Geometry): EditableMesh
 	return mesh
 end
 
-return function(MODE: "preview" | "upload", ONLY: { string }?): string
+return function(mode: "preview" | "upload", only: { string }?): string
 	local results = {}
 	local built = {}
 	for _, spec in SPECS do
-		if ONLY and not table.find(ONLY, spec.name) then
+		if only and not table.find(only, spec.name) then
 			continue
 		end
-		local geometry = if spec.kind == "wall"
-			then buildWall(spec)
-			elseif spec.kind == "column" then buildColumn(spec)
-			else buildCollar(spec)
+		local geometry = if spec.kind == "wall" then buildWall(spec) else buildColumn(spec)
 		local mesh = toEditable(spec, geometry)
 		local entry = { name = spec.name, vertices = #geometry.positions, triangles = #geometry.tris }
-		if MODE == "upload" then
+		if mode == "upload" then
 			local ok, result, assetId = pcall(function()
 				return AssetService:CreateAssetAsync(mesh, Enum.AssetType.Mesh, {
 					CreatorId = game.CreatorId,
@@ -457,7 +401,7 @@ return function(MODE: "preview" | "upload", ONLY: { string }?): string
 						then Enum.AssetCreatorType.Group
 						else Enum.AssetCreatorType.User,
 					Name = "SignalMazeV9_" .. spec.name,
-					Description = "Signal Maze v9 lumpy flesh mesh with nine Wall_* bones.",
+					Description = "Signal Maze v9 flesh mesh with nine Wall_* bones.",
 				})
 			end)
 			entry.ok = ok
@@ -470,10 +414,10 @@ return function(MODE: "preview" | "upload", ONLY: { string }?): string
 		table.insert(results, entry)
 	end
 
-	if MODE == "preview" then
-		local folder = game:GetService("ServerStorage"):FindFirstChild("SignalMazeV9_MeshPreview") or Instance.new("Folder")
-		folder.Name = "SignalMazeV9_MeshPreview"
-		folder.Parent = game:GetService("ServerStorage")
+	if mode == "preview" then
+		local folder = ServerStorage:FindFirstChild(PREVIEW_NAME) or Instance.new("Folder")
+		folder.Name = PREVIEW_NAME
+		folder.Parent = ServerStorage
 		for name, part in built do
 			local old = folder:FindFirstChild(name)
 			if old then
