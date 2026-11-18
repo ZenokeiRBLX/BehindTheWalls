@@ -241,9 +241,15 @@ local function isToggleable(instance: Instance): boolean
 end
 
 local function setHandleLights(handle: Instance, enabled: boolean)
+	local beam = Config.Flashlight.HandleBeam
 	for _, descendant in handle:GetDescendants() do
 		if isToggleable(descendant) then
 			(descendant :: any).Enabled = enabled
+		end
+		if enabled and descendant:IsA("SpotLight") then
+			descendant.Brightness = beam.Brightness
+			descendant.Range = beam.Range
+			descendant.Angle = beam.Angle
 		end
 	end
 end

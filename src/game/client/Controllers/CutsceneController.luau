@@ -633,9 +633,11 @@ local function playSoundAt(name: string, part: BasePart, volumeScale: number, sp
 	Debris:AddItem(sound, FALL_SOUND_LIFETIME)
 end
 
-local function playFallSounds(rootPart: BasePart)
+local function playFallSounds(rootPart: BasePart, crack: boolean)
 	local audio = Config.Cutscene.Audio
-	playSoundAt(audio.BoneCrackName, rootPart, audio.BoneCrackVolumeScale, audio.BoneCrackSpeedRange)
+	if crack then
+		playSoundAt(audio.BoneCrackName, rootPart, audio.BoneCrackVolumeScale, audio.BoneCrackSpeedRange)
+	end
 	local screams = audio.ScreamNames
 	if #screams > 0 then
 		local pick = screams[WALK_RNG:NextInteger(1, #screams)]
@@ -924,9 +926,9 @@ local function localizeWalker(walker: Walker)
 	end
 end
 
-local function ragdollWalker(walker: Walker, forward: Vector3, right: Vector3)
+local function ragdollWalker(walker: Walker, forward: Vector3, right: Vector3, crack: boolean): boolean
 	if walker.dropped then
-		return
+		return false
 	end
 	localizeWalker(walker)
 	walker.dropped = true
@@ -936,7 +938,7 @@ local function ragdollWalker(walker: Walker, forward: Vector3, right: Vector3)
 	end
 	local rig = walker.rig
 	if not walker.isLocal or not rig.PrimaryPart or not rig:FindFirstChild("UpperTorso") then
-		return
+		return false
 	end
 	local humanoid = rig:FindFirstChildOfClass("Humanoid")
 	if humanoid then
@@ -954,7 +956,7 @@ local function ragdollWalker(walker: Walker, forward: Vector3, right: Vector3)
 		local ok, err = pcall(WRagdoll.TurnRagdoll, WRagdoll, humanoid)
 		if not ok then
 			warn(("CutsceneController: ragdoll failed for %s: %s"):format(rig.Name, tostring(err)))
-			return
+			return false
 		end
 	end
 	local fall = Config.Cutscene.Fall
@@ -991,9 +993,11 @@ local function ragdollWalker(walker: Walker, forward: Vector3, right: Vector3)
 		end
 	end
 	local rootPart = rig.PrimaryPart
-	if rootPart then
-		playFallSounds(rootPart)
+	if not rootPart then
+		return false
 	end
+	playFallSounds(rootPart, crack)
+	return true
 end
 
 local function walkToHole(token: number, scene: Scene): (Vector3?, Vector3?)
@@ -1165,6 +1169,7 @@ local function fallIntoHole(token: number, scene: Scene, forward: Vector3, right
 	local nextPebble = 1
 	local rumbled = false
 	local collapsed = false
+	local cracked = false
 
 	local shots = fall.Shots :: { Shot }
 	local total = lastDrop + fall.DiveDelay
@@ -1191,8 +1196,8 @@ local function fallIntoHole(token: number, scene: Scene, forward: Vector3, right
 			local look = blendDirection(heading, inward, turn)
 			walker.rig:PivotTo(CFrame.lookAt(position, position + look))
 			stepWalker(walker, position, dt)
-			if elapsed >= walker.dropAt then
-				ragdollWalker(walker, inward, inward:Cross(Vector3.yAxis).Unit)
+			if elapsed >= walker.dropAt and ragdollWalker(walker, inward, inward:Cross(Vector3.yAxis).Unit, not cracked) then
+				cracked = true
 			end
 		end
 		if not rumbled and elapsed >= rumbleAt then

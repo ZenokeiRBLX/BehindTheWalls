@@ -291,9 +291,15 @@ end
 
 local function applyShadowSetting(root: Instance)
 	local shadows = Config.Flashlight.Local.LightShadows
+	local beam = Config.Flashlight.Local.Beam
 	for _, descendant in root:GetDescendants() do
 		if descendant:IsA("Light") then
 			descendant.Shadows = shadows
+		end
+		if descendant:IsA("SpotLight") then
+			descendant.Brightness = beam.Brightness
+			descendant.Range = beam.Range
+			descendant.Angle = beam.Angle
 		end
 	end
 end

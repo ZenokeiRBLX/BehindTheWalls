@@ -332,7 +332,7 @@ local function update(dt: number)
 
 	local velocity = root.AssemblyLinearVelocity
 	local planarSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
-	local walkSpeed = if humanoid then math.max(humanoid.WalkSpeed, 1) else 16
+	local walkSpeed = if humanoid then math.max(math.min(humanoid.WalkSpeed, Config.Movement.WalkSpeed), 1) else Config.Movement.WalkSpeed
 	local grounded = humanoid ~= nil and humanoid.FloorMaterial ~= Enum.Material.Air
 	local alive = humanoid ~= nil and humanoid.Health > 0
 
