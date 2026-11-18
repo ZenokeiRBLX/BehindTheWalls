@@ -851,7 +851,9 @@ Config.Monsters = {
 				Afterimages = 2,
 				AfterimageLag = 0.09,
 				Color = Color3.fromRGB(255, 34, 34),
-				Outline = Color3.fromRGB(255, 90, 90),
+				Outline = Color3.fromRGB(150, 10, 18),
+				GlowRange = 22,
+				GlowBrightness = 4,
 				SurgeDistance = 7,
 			},
 			Audio = {

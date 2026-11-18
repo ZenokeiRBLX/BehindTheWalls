@@ -71,7 +71,7 @@ type Ghost = {
 	model: Model,
 	mesh: MeshPart,
 	bones: { [string]: Bone },
-	highlight: Highlight,
+	glow: PointLight?,
 	lag: number,
 	base: number,
 }
@@ -321,17 +321,13 @@ local function destroyGhosts(view: View)
 end
 
 local function ghostFolder(): Instance?
-	local camera = Workspace.CurrentCamera
-	if not camera then
-		return nil
-	end
-	local folder = camera:FindFirstChild(GHOST_FOLDER)
+	local folder = Workspace:FindFirstChild(GHOST_FOLDER)
 	if folder then
 		return folder
 	end
 	local created = Instance.new("Folder")
 	created.Name = GHOST_FOLDER
-	created.Parent = camera
+	created.Parent = Workspace
 	return created
 end
 
@@ -366,20 +362,28 @@ local function ensureGhosts(view: View)
 				bones[descendant.Name] = descendant
 			end
 		end
-		local highlight = Instance.new("Highlight")
-		highlight.FillColor = warp.Color
-		highlight.OutlineColor = warp.Outline
-		highlight.DepthMode = Enum.HighlightDepthMode.Occluded
-		highlight.Adornee = model
-		highlight.Parent = model
+		local glow: PointLight? = nil
+		if index == 0 then
+			local light = Instance.new("PointLight")
+			light.Color = warp.Color
+			light.Range = warp.GlowRange
+			light.Brightness = 0
+			light.Shadows = false
+			light.Parent = mesh
+			glow = light
+		else
+			mesh.TextureID = ""
+			mesh.Material = Enum.Material.Neon
+			mesh.Color = if index == 1 then warp.Color else warp.Outline
+		end
 		model.Parent = folder
 		table.insert(view.ghosts, {
 			model = model,
 			mesh = mesh,
 			bones = bones,
-			highlight = highlight,
+			glow = glow,
 			lag = index * warp.AfterimageLag,
-			base = if index == 0 then 0 else 0.45 + index * 0.15,
+			base = if index == 0 then 0 else 0.35 + index * 0.15,
 		})
 	end
 end
@@ -433,10 +437,12 @@ local function updateWarp(view: View)
 			* real.Rotation
 			* CFrame.Angles(rng:NextNumber(-0.1, 0.1) * (1 - out), 0, rng:NextNumber(-0.15, 0.15) * (1 - out))
 		local flicker = if rng:NextNumber() < 0.18 * (1 - out) then 0.6 else 0
-		ghost.mesh.Transparency = math.clamp(ghost.base + (1 - out) * 0.35 + flicker, 0, 1)
-		local fade = if ghost.lag == 0 then out * out else 0
-		ghost.highlight.FillTransparency = 0.4 + 0.6 * fade
-		ghost.highlight.OutlineTransparency = 0.1 + 0.9 * fade
+		local trail = if ghost.lag > 0 then out * out * 0.6 else 0
+		ghost.mesh.Transparency = math.clamp(ghost.base + (1 - out) * 0.35 + flicker + trail, 0, 1)
+		local glow = ghost.glow
+		if glow then
+			glow.Brightness = warp.GlowBrightness * (1 - out * out) * (0.55 + 0.45 * rng:NextNumber())
+		end
 		for name, entry in view.bones do
 			local bone = ghost.bones[name]
 			if bone then
