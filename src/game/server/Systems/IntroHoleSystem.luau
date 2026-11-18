@@ -5,6 +5,7 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Modules"):WaitForChild("Config"))
+local MapSystem = require(script.Parent:WaitForChild("MapSystem"))
 
 local IntroHoleSystem = {}
 
@@ -15,11 +16,15 @@ local DEFAULT_GROUP = "Default"
 local FLOOR_SEARCH_HEIGHT = 6
 local FLOOR_SEARCH_DEPTH = 20
 local RIM_MARGIN = 3
+local SETTLE_HEIGHT = 12
+local SETTLE_RADIUS = 30
 local EPSILON = 0.001
 
 type Fall = {
 	character: Model,
 	target: CFrame,
+	transit: CFrame?,
+	level: string?,
 	groups: { [BasePart]: string },
 	connection: RBXScriptConnection?,
 }
@@ -121,16 +126,31 @@ local function flatten(vector: Vector3, fallback: Vector3): Vector3
 	return flat.Unit
 end
 
+local function standHeight(humanoid: Humanoid, root: BasePart): number
+	return humanoid.HipHeight + root.Size.Y / 2
+end
+
+local function levelCFrame(entry: CFrame, humanoid: Humanoid, root: BasePart): CFrame
+	local position = entry.Position + Vector3.yAxis * standHeight(humanoid, root)
+	return CFrame.lookAt(position, position + flatten(entry.LookVector, -Vector3.zAxis))
+end
+
+local function descentSeconds(transit: CFrame, landing: CFrame): number
+	local settings = Config.IntroHole.Level
+	local distance = math.max(transit.Position.Y - (landing.Position.Y + settings.ReleaseHeight), 0)
+	return 2 * distance / math.max(settings.StartSpeed + settings.EndSpeed, EPSILON)
+end
+
 local function arrivalCFrame(humanoid: Humanoid, root: BasePart, hole: Vector3): CFrame
-	local standHeight = humanoid.HipHeight + root.Size.Y / 2 + Config.IntroHole.ArrivalDropHeight
+	local height = standHeight(humanoid, root) + Config.IntroHole.ArrivalDropHeight
 	local destination = findDestination()
 	local surface = if destination then surfaceOf(destination) else nil
 	if surface then
-		local position = surface.Position + Vector3.yAxis * standHeight
+		local position = surface.Position + Vector3.yAxis * height
 		return CFrame.lookAt(position, position + flatten(surface.LookVector, -Vector3.zAxis))
 	end
 	local away = flatten(root.Position - hole, -root.CFrame.LookVector)
-	local position = hole + away * (Config.IntroHole.TriggerRadius + RIM_MARGIN) + Vector3.yAxis * standHeight
+	local position = hole + away * (Config.IntroHole.TriggerRadius + RIM_MARGIN) + Vector3.yAxis * height
 	return CFrame.lookAt(position, position + away)
 end
 
@@ -165,33 +185,101 @@ local function endFall(player: Player)
 	restoreGroups(fall)
 	if fall.character.Parent then
 		fall.character:SetAttribute(Config.IntroHole.FallingAttribute, nil)
+		fall.character:SetAttribute(Config.IntroHole.Level.TransitAttribute, nil)
 	end
 	cooldowns[player] = os.clock() + Config.IntroHole.RetriggerCooldown
+end
+
+local function livingBody(fall: Fall): (Humanoid?, BasePart?)
+	local character = fall.character
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local root = if humanoid then humanoid.RootPart else nil
+	if not character.Parent or not humanoid or not root or humanoid.Health <= 0 then
+		return nil, nil
+	end
+	return humanoid, root
+end
+
+local function moveBody(fall: Fall, root: BasePart, target: CFrame)
+	root.AssemblyLinearVelocity = Vector3.zero
+	root.AssemblyAngularVelocity = Vector3.zero
+	fall.character:PivotTo(target)
 end
 
 local function land(player: Player, fall: Fall)
 	if falls[player] ~= fall then
 		return
 	end
-	local character = fall.character
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	local root = if humanoid then humanoid.RootPart else nil
-	if not character.Parent or not humanoid or not root or humanoid.Health <= 0 then
+	local _, root = livingBody(fall)
+	if not root then
 		endFall(player)
 		return
 	end
-	character:SetAttribute(Config.IntroHole.ArrivalAttribute, fall.target)
-	root.AssemblyLinearVelocity = Vector3.zero
-	root.AssemblyAngularVelocity = Vector3.zero
-	character:PivotTo(fall.target)
+	fall.character:SetAttribute(Config.IntroHole.ArrivalAttribute, fall.target)
+	moveBody(fall, root, fall.target)
+	if fall.level then
+		MapSystem.setPlayerMap(player, fall.level)
+	end
 	endFall(player)
+end
+
+local function settle(player: Player, fall: Fall)
+	if falls[player] ~= fall then
+		return
+	end
+	local _, root = livingBody(fall)
+	if not root then
+		endFall(player)
+		return
+	end
+	fall.character:SetAttribute(Config.IntroHole.ArrivalAttribute, fall.target)
+	local offset = root.Position - fall.target.Position
+	if math.abs(offset.Y) > SETTLE_HEIGHT or Vector2.new(offset.X, offset.Z).Magnitude > SETTLE_RADIUS then
+		moveBody(fall, root, fall.target)
+	end
+	endFall(player)
+end
+
+local function enterLevel(player: Player, fall: Fall)
+	if falls[player] ~= fall then
+		return
+	end
+	local transit = fall.transit
+	local _, root = livingBody(fall)
+	if not root or not transit then
+		land(player, fall)
+		return
+	end
+	local settings = Config.IntroHole.Level
+	fall.character:SetAttribute(settings.TransitAttribute, transit)
+	moveBody(fall, root, transit)
+	if fall.level then
+		MapSystem.setPlayerMap(player, fall.level)
+	end
+	task.delay(settings.CardSeconds + descentSeconds(transit, fall.target) + settings.FinalizeMargin, settle, player, fall)
+end
+
+local function streamAround(player: Player, positions: { Vector3 })
+	task.spawn(function()
+		for _, position in positions do
+			local ok, err = pcall(function()
+				player:RequestStreamAroundAsync(position, Config.IntroHole.StreamTimeout)
+			end)
+			if not ok then
+				warn(("IntroHoleSystem: could not stream the landing for %s: %s"):format(player.Name, tostring(err)))
+			end
+		end
+	end)
 end
 
 local function beginFall(player: Player, character: Model, humanoid: Humanoid, root: BasePart, hole: Vector3)
 	local settings = Config.IntroHole
+	local level = MapSystem.getActive()
 	local fall: Fall = {
 		character = character,
-		target = arrivalCFrame(humanoid, root, hole),
+		target = if level then levelCFrame(level.entry, humanoid, root) else arrivalCFrame(humanoid, root, hole),
+		transit = if level then level.shaftTop else nil,
+		level = if level then level.key else nil,
 		groups = {},
 		connection = nil,
 	}
@@ -203,16 +291,11 @@ local function beginFall(player: Player, character: Model, humanoid: Humanoid, r
 		moveToFallGroup(fall, descendant)
 	end)
 	character:SetAttribute(settings.ArrivalAttribute, nil)
+	character:SetAttribute(settings.Level.TransitAttribute, nil)
 	character:SetAttribute(settings.FallingAttribute, true)
-	task.spawn(function()
-		local ok, err = pcall(function()
-			player:RequestStreamAroundAsync(fall.target.Position, settings.StreamTimeout)
-		end)
-		if not ok then
-			warn(("IntroHoleSystem: could not stream the landing for %s: %s"):format(player.Name, tostring(err)))
-		end
-	end)
-	task.delay(settings.FallSeconds, land, player, fall)
+	local transit = fall.transit
+	streamAround(player, if transit then { fall.target.Position, transit.Position } else { fall.target.Position })
+	task.delay(settings.FallSeconds, if transit then enterLevel else land, player, fall)
 end
 
 local function isInHole(root: BasePart, hole: Vector3): boolean
@@ -275,7 +358,9 @@ function IntroHoleSystem.start()
 	registerGroup()
 	Workspace:SetAttribute(CENTER_ATTRIBUTE, center)
 	Workspace:SetAttribute(RADIUS_ATTRIBUTE, Config.IntroHole.TriggerRadius)
-	findDestination()
+	if not MapSystem.getActive() then
+		findDestination()
+	end
 	table.insert(connections, RunService.Heartbeat:Connect(poll))
 	table.insert(connections, Players.PlayerRemoving:Connect(onPlayerRemoving))
 end

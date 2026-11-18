@@ -10,6 +10,7 @@ local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Modules"):WaitForChild("Config"))
 local FirstPersonCameraController = require(script.Parent:WaitForChild("FirstPersonCameraController"))
+local LevelCardController = require(script.Parent:WaitForChild("LevelCardController"))
 
 local IntroHoleController = {}
 
@@ -22,7 +23,13 @@ local FADE_GUI_NAME = "IntroHoleFade"
 local FADE_DISPLAY_ORDER = 1000
 local SHAFT_NAME = "IntroHoleShaft"
 local BLUR_NAME = "IntroHoleWakeBlur"
+local LAND_BLUR_NAME = "IntroHoleLandBlur"
 local LIFT_NAME = "IntroHoleLift"
+local PHASE_SEWER = "Sewer"
+local PHASE_CARD = "Card"
+local PHASE_DESCENT = "Descent"
+local PHASE_LANDED = "Landed"
+local SPLASH_NAME = Config.Cutscene.Audio.SplashName
 local DUST_TEXTURE = "rbxasset://textures/particles/smoke_main.dds"
 local GLOW_LOOKUP_SECONDS = 1
 local MAX_LIGHT_RANGE = 60
@@ -83,6 +90,13 @@ type Fall = {
 	fadeGui: ScreenGui?,
 	fadeFrame: Frame?,
 	wind: Sound?,
+	phase: string,
+	level: string?,
+	transit: CFrame?,
+	landing: CFrame?,
+	landingYaw: number,
+	descentStart: number,
+	descentDuration: number,
 }
 
 local isStarted = false
@@ -605,6 +619,9 @@ local function cleanup(fall: Fall)
 	releaseBody(fall)
 	clearScene(fall)
 	stopWind(fall)
+	if fall.phase == PHASE_CARD then
+		LevelCardController.hide(0)
+	end
 	if fall.fadeGui then
 		fall.fadeGui:Destroy()
 		fall.fadeGui = nil
@@ -675,6 +692,185 @@ local function arrive(fall: Fall, target: CFrame)
 	task.spawn(wake, fall)
 end
 
+local function readLevel(): (string?, CFrame?, CFrame?)
+	local name = Workspace:GetAttribute(Config.Maps.LevelAttribute)
+	local entry = Workspace:GetAttribute(Config.Maps.EntryAttribute)
+	local top = Workspace:GetAttribute(Config.Maps.ShaftTopAttribute)
+	if type(name) ~= "string" or typeof(entry) ~= "CFrame" or typeof(top) ~= "CFrame" then
+		return nil, nil, nil
+	end
+	return name, entry, top
+end
+
+local function flatYaw(look: Vector3, fallback: number): number
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < EPSILON then
+		return fallback
+	end
+	return math.atan2(-flat.X, -flat.Z)
+end
+
+local function releasePoint(fall: Fall): Vector3
+	local landing = fall.landing :: CFrame
+	return landing.Position + Vector3.yAxis * Config.IntroHole.Level.ReleaseHeight
+end
+
+local function descentProgress(fall: Fall, now: number): number
+	if fall.phase ~= PHASE_DESCENT then
+		return 0
+	end
+	return math.clamp((now - fall.descentStart) / math.max(fall.descentDuration, EPSILON), 0, 1)
+end
+
+local function descentSpeed(fall: Fall, progress: number): number
+	if fall.phase ~= PHASE_DESCENT then
+		return 0
+	end
+	local settings = Config.IntroHole.Level
+	return lerp(settings.StartSpeed, settings.EndSpeed, progress)
+end
+
+local function descentFraction(progress: number): number
+	local settings = Config.IntroHole.Level
+	local startSpeed, endSpeed = settings.StartSpeed, settings.EndSpeed
+	return (startSpeed * progress + 0.5 * (endSpeed - startSpeed) * progress * progress) * 2 / math.max(startSpeed + endSpeed, EPSILON)
+end
+
+local function playAt(name: string, root: BasePart, volumeScale: number)
+	local template = findSound(name)
+	if template then
+		playClone(template, root, volumeScale, nil)
+	end
+end
+
+local function landBlur()
+	local camera = Workspace.CurrentCamera
+	local settings = Config.IntroHole.Level
+	if not camera or settings.LandBlur <= 0 then
+		return
+	end
+	local blur = Instance.new("BlurEffect")
+	blur.Name = LAND_BLUR_NAME
+	blur.Size = settings.LandBlur
+	blur.Parent = camera
+	local info = TweenInfo.new(math.max(settings.LandBlurSeconds, 0.05), Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local tween = TweenService:Create(blur, info, { Size = 0 })
+	tween.Completed:Once(function()
+		blur:Destroy()
+	end)
+	tween:Play()
+	Debris:AddItem(blur, settings.LandBlurSeconds + 1)
+end
+
+local function landLevel(fall: Fall)
+	if fall.arrived or fall.cleaned then
+		return
+	end
+	local settings = Config.IntroHole.Level
+	fall.arrived = true
+	fall.phase = PHASE_LANDED
+	unbindCamera()
+	releaseBody(fall)
+	fall.root.AssemblyAngularVelocity = Vector3.zero
+	fall.root.CFrame = CFrame.new(releasePoint(fall)) * CFrame.Angles(0, fall.landingYaw, 0)
+	fall.root.AssemblyLinearVelocity = Vector3.new(0, -settings.LandSpeed, 0)
+	if fall.humanoid.Health > 0 then
+		fall.humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+	end
+	setFade(fall, 0)
+	stopWind(fall)
+	retriggerAt = os.clock() + Config.IntroHole.RetriggerCooldown
+	local camera = Workspace.CurrentCamera
+	if camera then
+		camera.FieldOfView = Config.Camera.FieldOfView
+	end
+	FirstPersonCameraController.enable()
+	FirstPersonCameraController.snap()
+	landBlur()
+	playAt(SPLASH_NAME, fall.root, Config.Cutscene.Audio.SplashVolumeScale)
+	playAt(settings.SquelchName, fall.root, settings.SquelchVolumeScale)
+	task.delay(settings.LandLockSeconds, function()
+		if not fall.cleaned then
+			setControls(true)
+		end
+	end)
+	task.delay(settings.HudDelaySeconds, cleanup, fall)
+end
+
+local function enterCard(fall: Fall)
+	local transit = fall.transit
+	if not transit or not fall.landing or fall.phase ~= PHASE_SEWER then
+		return
+	end
+	local settings = Config.IntroHole.Level
+	fall.phase = PHASE_CARD
+	fall.floorHidden = false
+	clearScene(fall)
+	setFade(fall, 1)
+	fall.root.AssemblyLinearVelocity = Vector3.zero
+	fall.root.AssemblyAngularVelocity = Vector3.zero
+	fall.character:PivotTo(CFrame.new(transit.Position) * CFrame.Angles(0, fall.landingYaw, 0))
+	local distance = math.max(transit.Position.Y - releasePoint(fall).Y, 0)
+	fall.descentStart = os.clock() + settings.CardSeconds
+	fall.descentDuration = 2 * distance / math.max(settings.StartSpeed + settings.EndSpeed, EPSILON)
+	local camera = Workspace.CurrentCamera
+	if camera then
+		camera.FieldOfView = settings.FieldOfView
+	end
+	if fall.level then
+		LevelCardController.play(fall.level)
+	end
+end
+
+local function stepLevelBody(fall: Fall, now: number)
+	local transit = fall.transit :: CFrame
+	if fall.phase == PHASE_CARD and now >= fall.descentStart then
+		fall.phase = PHASE_DESCENT
+	end
+	local rotation = CFrame.Angles(0, fall.landingYaw, 0)
+	if fall.phase == PHASE_CARD then
+		fall.root.CFrame = CFrame.new(transit.Position) * rotation
+		fall.root.AssemblyLinearVelocity = Vector3.zero
+		fall.root.AssemblyAngularVelocity = Vector3.zero
+		return
+	end
+	local progress = descentProgress(fall, now)
+	local release = releasePoint(fall)
+	local path = release - transit.Position
+	fall.root.CFrame = CFrame.new(transit.Position + path * descentFraction(progress)) * rotation
+	fall.root.AssemblyLinearVelocity = if path.Magnitude > EPSILON then path.Unit * descentSpeed(fall, progress) else Vector3.zero
+	fall.root.AssemblyAngularVelocity = Vector3.zero
+	if progress >= 1 then
+		landLevel(fall)
+	end
+end
+
+local function stepLevelCamera(fall: Fall, camera: Camera, now: number)
+	local settings = Config.IntroHole.Level
+	local progress = descentProgress(fall, now)
+	local look = smoothstep((progress - settings.LookUpStart) / math.max(1 - settings.LookUpStart, EPSILON))
+	local pitch = lerp(math.rad(settings.StartPitchDegrees), math.rad(Config.Camera.DefaultPitch), look)
+	local yaw = fall.landingYaw + math.rad(settings.SpinDegrees) * (1 - smoothstep(progress))
+	local t = now - fall.startTime
+	local roll = math.rad(settings.RollDegrees) * math.sin(t * settings.RollSpeed * TWO_PI) * (1 - look)
+	local amplitude = math.rad(settings.ShakeDegrees) * math.clamp(descentSpeed(fall, progress) / math.max(settings.EndSpeed, EPSILON), 0, 1)
+	local noiseTime = t * settings.ShakeSpeed
+	local shake = CFrame.Angles(
+		math.noise(noiseTime, NOISE_PITCH) * amplitude,
+		math.noise(noiseTime, NOISE_YAW) * amplitude,
+		math.noise(noiseTime, NOISE_ROLL) * amplitude
+	)
+	local eye = fall.root.Position + Vector3.yAxis * fall.eyeOffset
+	camera.CFrame = CFrame.new(eye) * CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, roll) * shake
+	camera.Focus = CFrame.new(eye)
+	camera.FieldOfView = lerp(settings.FieldOfView, Config.Camera.FieldOfView, look)
+	if fall.phase == PHASE_DESCENT then
+		setFade(fall, 1 - (now - fall.descentStart) / math.max(settings.RevealSeconds, EPSILON))
+	else
+		setFade(fall, 1)
+	end
+end
+
 local function cameraAngles(fall: Fall, t: number): (number, number)
 	local settings = Config.IntroHole.Fall
 	local tipPitch = math.rad(settings.TipPitchDegrees)
@@ -704,6 +900,10 @@ local function stepCamera(dt: number)
 	UserInputService.MouseIconEnabled = false
 	for _, part in fall.bodyParts do
 		part.LocalTransparencyModifier = 1
+	end
+	if fall.phase == PHASE_CARD or fall.phase == PHASE_DESCENT then
+		stepLevelCamera(fall, camera, os.clock())
+		return
 	end
 
 	local pitch, roll = cameraAngles(fall, t)
@@ -737,6 +937,10 @@ local function stepBody()
 	if not fall or fall.arrived then
 		return
 	end
+	if fall.phase == PHASE_CARD or fall.phase == PHASE_DESCENT then
+		stepLevelBody(fall, os.clock())
+		return
+	end
 	local settings = Config.IntroHole.Fall
 	local t = os.clock() - fall.startTime
 	local speed
@@ -759,6 +963,30 @@ local function stepFall()
 	end
 	local settings = Config.IntroHole
 	local t = os.clock() - fall.startTime
+	if fall.level then
+		local falling = fall.character:GetAttribute(settings.FallingAttribute) == true
+		if falling then
+			fall.confirmed = true
+		end
+		if fall.phase ~= PHASE_SEWER then
+			if t > settings.FallSeconds + settings.Level.CardSeconds + fall.descentDuration + settings.Fall.ArrivalTimeout then
+				landLevel(fall)
+			end
+			return
+		end
+		local transit = fall.character:GetAttribute(settings.Level.TransitAttribute)
+		if fall.confirmed and (t >= settings.FallSeconds or typeof(transit) == "CFrame") then
+			enterCard(fall)
+			return
+		end
+		if fall.confirmed and not falling then
+			local target = fall.character:GetAttribute(settings.ArrivalAttribute)
+			arrive(fall, if typeof(target) == "CFrame" then target else rimCFrame(fall))
+		elseif not fall.confirmed and t > settings.Fall.ConfirmSeconds then
+			arrive(fall, rimCFrame(fall))
+		end
+		return
+	end
 	if fall.character:GetAttribute(settings.FallingAttribute) == true then
 		fall.confirmed = true
 	elseif fall.confirmed then
@@ -779,6 +1007,15 @@ local function beginFall(character: Model, humanoid: Humanoid, root: BasePart, c
 	local eyeOffset = if head and head:IsA("BasePart")
 		then head.Position.Y - root.Position.Y + Config.Camera.EyeLift
 		else DEFAULT_EYE_OFFSET
+	local startYaw = math.atan2(-look.X, -look.Z)
+	local levelName, entry, top = readLevel()
+	local landing: CFrame? = nil
+	local landingYaw = startYaw
+	if entry then
+		local position = entry.Position + Vector3.yAxis * (humanoid.HipHeight + root.Size.Y / 2)
+		landingYaw = flatYaw(entry.LookVector, startYaw)
+		landing = CFrame.new(position) * CFrame.Angles(0, landingYaw, 0)
+	end
 	local fall: Fall = {
 		character = character,
 		humanoid = humanoid,
@@ -788,7 +1025,7 @@ local function beginFall(character: Model, humanoid: Humanoid, root: BasePart, c
 		startPosition = root.Position,
 		startPitch = math.asin(math.clamp(look.Y, -1, 1)),
 		startFov = if camera then camera.FieldOfView else Config.Camera.FieldOfView,
-		yaw = math.atan2(-look.X, -look.Z),
+		yaw = startYaw,
 		eyeOffset = eyeOffset,
 		confirmed = confirmed,
 		arrived = false,
@@ -807,6 +1044,13 @@ local function beginFall(character: Model, humanoid: Humanoid, root: BasePart, c
 		fadeGui = nil,
 		fadeFrame = nil,
 		wind = nil,
+		phase = PHASE_SEWER,
+		level = if landing and top then levelName else nil,
+		transit = if landing then top else nil,
+		landing = landing,
+		landingYaw = landingYaw,
+		descentStart = 0,
+		descentDuration = 0,
 	}
 	active = fall
 	FirstPersonCameraController.setHudHidden(true)

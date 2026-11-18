@@ -3,6 +3,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Modules"):WaitForChild("Config"))
 local FirstPersonCameraController = require(script.Parent:WaitForChild("FirstPersonCameraController"))
@@ -11,12 +12,30 @@ local FlashlightController = require(script.Parent:WaitForChild("FlashlightContr
 local HudController = {}
 
 local RAGDOLL_ATTRIBUTE = "Ragdolled"
+local GUIDE_BIND = "HudGuide"
+local GUIDE_EPSILON = 0.001
 
 export type ObjectiveEntry = {
 	text: string,
 	progress: number?,
 	goal: number?,
 	complete: boolean?,
+	guide: boolean?,
+}
+
+type Guide = {
+	group: CanvasGroup,
+	arrow: GuiObject,
+	chevron: GuiObject,
+	distance: TextLabel,
+}
+
+type Waypoint = {
+	group: CanvasGroup,
+	pointer: GuiObject,
+	distance: TextLabel,
+	position: Vector2?,
+	alpha: number,
 }
 
 type Step = {
@@ -57,6 +76,8 @@ type MainView = {
 	heartSize: UDim2,
 	heartColor: Color3,
 	heartTransparency: number,
+	guides: { [TextLabel]: Guide },
+	waypoint: Waypoint?,
 }
 
 type SlotSettings = {
@@ -115,6 +136,7 @@ local visibilityToken = 0
 local rollToken = 0
 local reviveCount = 0
 local objectives: { ObjectiveEntry }? = nil
+local guideTarget: Vector3? = nil
 local typeTokens: { [TextLabel]: number } = setmetatable({}, { __mode = "k" }) :: any
 
 local function tween(instance: Instance, seconds: number, goal: { [string]: any }, style: Enum.EasingStyle?, direction: Enum.EasingDirection?): Tween
@@ -308,6 +330,270 @@ local function removeLabel(label: TextLabel)
 	Debris:AddItem(label, seconds)
 end
 
+local function newStroke(parent: Instance, transparency: number)
+	local stroke = Instance.new("UIStroke")
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Color = Color3.new(0, 0, 0)
+	stroke.Transparency = transparency
+	stroke.Parent = parent
+end
+
+local function newSquare(name: string, parent: Instance, size: UDim2, position: UDim2, zIndex: number): Frame
+	local frame = Instance.new("Frame")
+	frame.Name = name
+	frame.AnchorPoint = Vector2.new(0.5, 0.5)
+	frame.Position = position
+	frame.Size = size
+	frame.BackgroundTransparency = 1
+	frame.BorderSizePixel = 0
+	frame.ZIndex = zIndex
+	local aspect = Instance.new("UIAspectRatioConstraint")
+	aspect.AspectRatio = 1
+	aspect.Parent = frame
+	frame.Parent = parent
+	return frame
+end
+
+local function buildChevron(parent: Instance, zIndex: number): Frame
+	local settings = Config.Hud.Guide
+	local holder = newSquare("Chevron", parent, UDim2.fromScale(1, 1), UDim2.fromScale(0.5, 0.5), zIndex)
+	for _, side in { -1, 1 } do
+		local bar = Instance.new("Frame")
+		bar.Name = if side < 0 then "Left" else "Right"
+		bar.AnchorPoint = Vector2.new(0.5, 0.5)
+		bar.Position = UDim2.fromScale(0.5 + side * 0.15, 0.42)
+		bar.Size = UDim2.fromScale(0.5, settings.BarThickness)
+		bar.Rotation = side * 45
+		bar.BorderSizePixel = 0
+		bar.BackgroundColor3 = Config.Hud.AccentColor
+		bar.ZIndex = zIndex
+		newCorner(bar, UDim.new(1, 0))
+		newStroke(bar, settings.StrokeTransparency)
+		bar.Parent = holder
+	end
+	return holder
+end
+
+local function guideText(name: string, parent: Instance, template: TextLabel?, zIndex: number): TextLabel
+	local label = Instance.new("TextLabel")
+	label.Name = name
+	label.BackgroundTransparency = 1
+	label.TextScaled = true
+	label.TextColor3 = Config.Hud.AccentColor
+	label.Text = ""
+	label.ZIndex = zIndex
+	if template then
+		label.FontFace = template.FontFace
+	end
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.new(0, 0, 0)
+	stroke.Transparency = Config.Hud.Guide.StrokeTransparency
+	stroke.Parent = label
+	label.Parent = parent
+	return label
+end
+
+local function buildLineGuide(view: MainView, label: TextLabel): Guide
+	local settings = Config.Hud.Guide
+	local group = Instance.new("CanvasGroup")
+	group.Name = settings.ArrowName
+	group.AnchorPoint = Vector2.new(0, 0.5)
+	group.Position = UDim2.fromScale(0, 0.5)
+	group.Size = UDim2.fromScale(0, settings.LineArrowScale)
+	group.BackgroundTransparency = 1
+	group.GroupTransparency = 1
+	group.Visible = false
+	group.ZIndex = label.ZIndex
+	local share = 1 / (1 + settings.LineDistanceWidth)
+	local arrow = Instance.new("Frame")
+	arrow.Name = "Arrow"
+	arrow.BackgroundTransparency = 1
+	arrow.Size = UDim2.fromScale(share, 1)
+	arrow.ZIndex = label.ZIndex
+	arrow.Parent = group
+	local chevron = buildChevron(arrow, label.ZIndex)
+	local distance = guideText("Distance", group, view.template, label.ZIndex)
+	distance.TextXAlignment = Enum.TextXAlignment.Left
+	distance.Position = UDim2.new(share, 4, 0.1, 0)
+	distance.Size = UDim2.new(1 - share, -4, 0.8, 0)
+	group.Parent = label
+	return { group = group, arrow = arrow, chevron = chevron, distance = distance }
+end
+
+local function buildWaypoint(view: MainView): Waypoint
+	local settings = Config.Hud.Guide
+	local group = Instance.new("CanvasGroup")
+	group.Name = settings.WaypointName
+	group.AnchorPoint = Vector2.new(0.5, 0.5)
+	group.Size = UDim2.fromScale(settings.MarkerSize * 3, settings.MarkerSize * 3)
+	group.SizeConstraint = Enum.SizeConstraint.RelativeYY
+	group.BackgroundTransparency = 1
+	group.GroupTransparency = 1
+	group.Visible = false
+	group.ZIndex = 50
+	local minimum = Instance.new("UISizeConstraint")
+	minimum.MinSize = Vector2.new(settings.MarkerMinPixels * 3, settings.MarkerMinPixels * 3)
+	minimum.Parent = group
+	local diamond = newSquare("Diamond", group, UDim2.fromScale(0.2, 0.2), UDim2.fromScale(0.5, 0.5), 51)
+	diamond.Rotation = 45
+	diamond.BackgroundColor3 = Color3.new(0, 0, 0)
+	diamond.BackgroundTransparency = settings.DiamondTransparency
+	local ring = Instance.new("UIStroke")
+	ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	ring.Color = Config.Hud.AccentColor
+	ring.Thickness = 2
+	ring.Parent = diamond
+	local dot = newSquare("Dot", group, UDim2.fromScale(0.06, 0.06), UDim2.fromScale(0.5, 0.5), 52)
+	dot.BackgroundColor3 = Config.Hud.AccentColor
+	dot.BackgroundTransparency = 0
+	newCorner(dot, UDim.new(1, 0))
+	local pointer = newSquare("Pointer", group, UDim2.fromScale(1, 1), UDim2.fromScale(0.5, 0.5), 52)
+	local tip = newSquare("Tip", pointer, UDim2.fromScale(0.22, 0.22), UDim2.fromScale(0.5, 0.2), 52)
+	buildChevron(tip, 52)
+	local distance = guideText("Distance", group, view.template, 52)
+	distance.AnchorPoint = Vector2.new(0.5, 0)
+	distance.Position = UDim2.fromScale(0.5, 0.66)
+	distance.Size = UDim2.fromScale(0.9, 0.16)
+	group.Parent = view.gui
+	return { group = group, pointer = pointer, distance = distance, position = nil, alpha = 0 }
+end
+
+local function setGroupTransparency(group: CanvasGroup, transparency: number)
+	group.GroupTransparency = transparency
+	group.Visible = transparency < 0.995
+end
+
+local function syncGuides(view: MainView)
+	local entries = objectives
+	local wanted: { [TextLabel]: boolean } = {}
+	if entries then
+		for index, entry in entries do
+			local label = view.labels[index]
+			if entry.guide and label then
+				wanted[label] = true
+				if not view.guides[label] then
+					view.guides[label] = buildLineGuide(view, label)
+				end
+			end
+		end
+	end
+	for label, guide in view.guides do
+		if not wanted[label] then
+			guide.group:Destroy()
+			view.guides[label] = nil
+		end
+	end
+end
+
+local function textEnd(label: TextLabel): number
+	local bounds = label.TextBounds.X
+	local width = label.AbsoluteSize.X
+	if label.TextXAlignment == Enum.TextXAlignment.Left then
+		return bounds
+	elseif label.TextXAlignment == Enum.TextXAlignment.Right then
+		return width
+	end
+	return (width + bounds) / 2
+end
+
+local function updateLineGuides(view: MainView, angle: number, meters: string, proximity: number)
+	local settings = Config.Hud.Guide
+	for label, guide in view.guides do
+		if not label.Parent then
+			continue
+		end
+		local height = label.AbsoluteSize.Y * settings.LineArrowScale
+		guide.group.Size = UDim2.fromOffset(height * (1 + settings.LineDistanceWidth), height)
+		guide.group.Position = UDim2.new(0, textEnd(label) + settings.LineGap, 0.5, 0)
+		guide.chevron.Rotation = angle
+		guide.distance.Text = meters
+		local hidden = math.clamp((label.TextTransparency - view.idleTransparency) / math.max(1 - view.idleTransparency, GUIDE_EPSILON), 0, 1)
+		local typed = label.MaxVisibleGraphemes < 0
+		local transparency = if typed then settings.ArrowTransparency + (1 - settings.ArrowTransparency) * hidden else 1
+		setGroupTransparency(guide.group, 1 - (1 - transparency) * proximity)
+	end
+end
+
+local function hideGuides(view: MainView)
+	for _, guide in view.guides do
+		setGroupTransparency(guide.group, 1)
+	end
+	local waypoint = view.waypoint
+	if waypoint then
+		waypoint.alpha = 0
+		waypoint.position = nil
+		setGroupTransparency(waypoint.group, 1)
+	end
+end
+
+local function updateWaypoint(view: MainView, camera: Camera, target: Vector3, meters: string, proximity: number, dt: number)
+	local settings = Config.Hud.Guide
+	local waypoint = view.waypoint
+	if not waypoint then
+		return
+	end
+	local viewport = camera.ViewportSize
+	local center = viewport / 2
+	local projected = camera:WorldToViewportPoint(target)
+	local relative = camera.CFrame:PointToObjectSpace(target)
+	local point = Vector2.new(projected.X, projected.Y)
+	local margin = settings.EdgeMargin * math.min(viewport.X, viewport.Y)
+	local inFront = relative.Z < 0
+	local onScreen = inFront
+		and point.X >= margin
+		and point.X <= viewport.X - margin
+		and point.Y >= margin
+		and point.Y <= viewport.Y - margin
+	local goal = point
+	local angle: number? = nil
+	if not onScreen then
+		local direction = if inFront
+			then point - center
+			else Vector2.new(if relative.X >= 0 then 1 else -1, settings.BehindDrop)
+		if direction.Magnitude < GUIDE_EPSILON then
+			direction = Vector2.new(0, 1)
+		end
+		goal = center + direction.Unit * settings.OrbitRadius * math.min(viewport.X, viewport.Y)
+		angle = math.deg(math.atan2(direction.Y, direction.X)) + 90
+	end
+	local previous = waypoint.position
+	local position = if previous then previous:Lerp(goal, 1 - math.exp(-settings.Smoothing * dt)) else goal
+	waypoint.position = position
+	local bob = if onScreen then math.sin(os.clock() / settings.BobSeconds * math.pi * 2) * settings.BobPixels else 0
+	waypoint.group.Position = UDim2.fromOffset(position.X, position.Y + bob)
+	waypoint.pointer.Visible = angle ~= nil
+	if angle then
+		waypoint.pointer.Rotation = angle
+	end
+	waypoint.distance.Text = meters
+	waypoint.alpha += (proximity - waypoint.alpha) * (1 - math.exp(-dt / math.max(settings.FadeSeconds, GUIDE_EPSILON) * 3))
+	setGroupTransparency(waypoint.group, 1 - waypoint.alpha)
+end
+
+local function updateGuide(dt: number)
+	local view = mainView
+	if not view then
+		return
+	end
+	local camera = Workspace.CurrentCamera
+	local character = Players.LocalPlayer.Character
+	local root = if character then character:FindFirstChild("HumanoidRootPart") else nil
+	local target = guideTarget
+	if not shown or not view.gui.Enabled or not target or not camera or not root or not root:IsA("BasePart") then
+		hideGuides(view)
+		return
+	end
+	local settings = Config.Hud.Guide
+	local distance = (target - root.Position).Magnitude
+	local proximity = math.clamp((distance - settings.HideDistance) / math.max(settings.ShowDistance - settings.HideDistance, GUIDE_EPSILON), 0, 1)
+	local meters = settings.DistanceFormat:format(math.floor(distance * settings.DistanceScale + 0.5))
+	local flat = Vector3.new(target.X - camera.CFrame.Position.X, 0, target.Z - camera.CFrame.Position.Z)
+	local relative = camera.CFrame:VectorToObjectSpace(flat)
+	local angle = math.deg(math.atan2(relative.X, -relative.Z))
+	updateLineGuides(view, angle, meters, proximity)
+	updateWaypoint(view, camera, target, meters, proximity, dt)
+end
+
 local function renderObjectives(view: MainView)
 	local entries = objectives
 	local list = view.list
@@ -361,6 +647,7 @@ local function renderObjectives(view: MainView)
 			end
 		end
 	end
+	syncGuides(view)
 end
 
 local function applyHeart(view: MainView, seconds: number)
@@ -619,6 +906,14 @@ local function unbindMain()
 	for _, connection in view.connections do
 		connection:Disconnect()
 	end
+	for _, guide in view.guides do
+		guide.group:Destroy()
+	end
+	table.clear(view.guides)
+	if view.waypoint then
+		view.waypoint.group:Destroy()
+		view.waypoint = nil
+	end
 end
 
 local function bindMain(gui: ScreenGui)
@@ -641,6 +936,7 @@ local function bindMain(gui: ScreenGui)
 		heartSize = UDim2.new(),
 		heartColor = Color3.new(1, 1, 1),
 		heartTransparency = 0,
+		guides = {},
 	}
 
 	local objective = findPath(gui, settings.Objectives.FramePath)
@@ -727,6 +1023,7 @@ local function bindMain(gui: ScreenGui)
 		end
 	end
 
+	view.waypoint = buildWaypoint(view)
 	mainView = view
 	renderObjectives(view)
 	table.insert(view.connections, gui.AncestryChanged:Connect(function()
@@ -1292,6 +1589,10 @@ function HudController.setObjectives(entries: { ObjectiveEntry })
 	end
 end
 
+function HudController.setGuideTarget(target: Vector3?)
+	guideTarget = target
+end
+
 function HudController.updateObjective(index: number, progress: number?, complete: boolean?)
 	local entries = objectives
 	local current = if entries then entries[index] else nil
@@ -1333,6 +1634,7 @@ function HudController.start()
 			setShown(wanted)
 		end
 	end))
+	RunService:BindToRenderStep(GUIDE_BIND, Enum.RenderPriority.Camera.Value + 10, updateGuide)
 end
 
 function HudController.stop()
@@ -1344,6 +1646,9 @@ function HudController.stop()
 		connection:Disconnect()
 	end
 	table.clear(connections)
+	pcall(function()
+		RunService:UnbindFromRenderStep(GUIDE_BIND)
+	end)
 	watchCharacter(nil)
 	unbindMain()
 	unbindHotbar()

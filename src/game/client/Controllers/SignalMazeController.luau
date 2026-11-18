@@ -1,6 +1,9 @@
 local CollectionService = game:GetService("CollectionService")
+local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Modules"):WaitForChild("Config"))
@@ -11,7 +14,11 @@ local SETTINGS = Config.SignalMaze
 local FLESH = SETTINGS.Flesh
 local SCREENS = SETTINGS.Screens
 local SHADOWS = SETTINGS.Shadows
+local AUDIO = SETTINGS.Audio
 local TAU = 2 * math.pi
+local BASE_BRIGHTNESS_ATTRIBUTE = "SignalBaseBrightness"
+local BASE_RANGE_ATTRIBUTE = "SignalBaseRange"
+local SOUND_LIFETIME = 10
 
 type BoneState = {
 	bone: Bone,
@@ -42,6 +49,8 @@ type ScreenState = {
 	nextResolveAt: number,
 	baseBrightness: number,
 	baseLight: number,
+	authoredLight: number,
+	authoredRange: number,
 	rollStart: number,
 	rollSeconds: number,
 	rollHeight: number,
@@ -57,6 +66,70 @@ local rng = Random.new()
 local accumulated = 0
 local shadowed: { [Light]: boolean } = {}
 local nextShadowAt = 0
+local staticSounds: { [ScreenState]: Sound } = {}
+local squirmSounds: { [FleshState]: Sound } = {}
+local nextAudioAt = 0
+local nextSquelchAt = 0
+local warnedSounds: { [string]: boolean } = {}
+
+local function findSound(name: string): Sound?
+	local sound = SoundService:FindFirstChild(name)
+	if sound and sound:IsA("Sound") then
+		return sound
+	end
+	if not warnedSounds[name] then
+		warnedSounds[name] = true
+		warn("SignalMazeController: SoundService." .. name .. " not found")
+	end
+	return nil
+end
+
+local function startLoop(name: string, parent: BasePart, speedRange: { number }, volumeScale: number): Sound?
+	local template = findSound(name)
+	if not template then
+		return nil
+	end
+	local sound = template:Clone()
+	local volume = template.Volume * volumeScale
+	sound.Looped = true
+	sound.PlaybackSpeed = template.PlaybackSpeed * rng:NextNumber(speedRange[1], speedRange[2])
+	sound.Volume = 0
+	sound.Parent = parent
+	if template.TimeLength > 0 then
+		sound.TimePosition = rng:NextNumber(0, template.TimeLength)
+	end
+	sound:Play()
+	TweenService:Create(sound, TweenInfo.new(AUDIO.FadeSeconds), { Volume = volume }):Play()
+	return sound
+end
+
+local function stopLoop(sound: Sound, instant: boolean?)
+	if instant or not sound.Parent then
+		sound:Destroy()
+		return
+	end
+	local tween = TweenService:Create(sound, TweenInfo.new(AUDIO.FadeSeconds), { Volume = 0 })
+	tween.Completed:Once(function()
+		sound:Destroy()
+	end)
+	tween:Play()
+end
+
+local function playOnce(name: string, parent: BasePart, speedRange: { number })
+	local template = findSound(name)
+	if not template then
+		return
+	end
+	local sound = template:Clone()
+	sound.Looped = false
+	sound.PlaybackSpeed = template.PlaybackSpeed * rng:NextNumber(speedRange[1], speedRange[2])
+	sound.Parent = parent
+	sound:Play()
+	sound.Ended:Once(function()
+		sound:Destroy()
+	end)
+	Debris:AddItem(sound, SOUND_LIFETIME)
+end
 
 local function heartbeat(u: number): number
 	local first = (u - 0.08) / 0.045
@@ -100,6 +173,11 @@ local function removeFlesh(instance: Instance)
 	local state = fleshStates[instance]
 	if state then
 		relaxFlesh(state)
+		local sound = squirmSounds[state]
+		if sound then
+			squirmSounds[state] = nil
+			stopLoop(sound, true)
+		end
 		fleshStates[instance] = nil
 	end
 end
@@ -154,8 +232,24 @@ local function resolveScreen(state: ScreenState, now: number): boolean
 	state.grid = if red then SCREENS.RedGrid else SCREENS.StaticGrid
 	state.interval = 1 / (if red then SCREENS.RedFps else SCREENS.StaticFps)
 	state.baseBrightness = gui.Brightness
-	state.baseLight = if light then light.Brightness else 0
 	state.rollHeight = if state.roll then state.roll.Size.Y.Scale else 0
+	if light then
+		local brightness = light:GetAttribute(BASE_BRIGHTNESS_ATTRIBUTE)
+		local range = light:GetAttribute(BASE_RANGE_ATTRIBUTE)
+		if type(brightness) ~= "number" or type(range) ~= "number" then
+			brightness = light.Brightness
+			range = light.Range
+			light:SetAttribute(BASE_BRIGHTNESS_ATTRIBUTE, brightness)
+			light:SetAttribute(BASE_RANGE_ATTRIBUTE, range)
+		end
+		state.authoredLight = brightness
+		state.authoredRange = range
+		state.baseLight = brightness * SCREENS.LightScale
+		light.Brightness = state.baseLight
+		light.Range = range * SCREENS.RangeScale
+	else
+		state.baseLight = 0
+	end
 	return true
 end
 
@@ -165,11 +259,17 @@ local function restoreScreen(state: ScreenState)
 	end
 	local light = state.light
 	if light then
-		light.Brightness = state.baseLight
+		light.Brightness = state.authoredLight
+		light.Range = state.authoredRange
 		if shadowed[light] then
 			light.Shadows = false
 			shadowed[light] = nil
 		end
+	end
+	local sound = staticSounds[state]
+	if sound then
+		staticSounds[state] = nil
+		stopLoop(sound, true)
 	end
 end
 
@@ -220,6 +320,8 @@ local function addScreen(instance: Instance)
 		nextResolveAt = 0,
 		baseBrightness = 1,
 		baseLight = 0,
+		authoredLight = 0,
+		authoredRange = 0,
 		rollStart = rng:NextNumber(0, SCREENS.RollSeconds[2]),
 		rollSeconds = rng:NextNumber(SCREENS.RollSeconds[1], SCREENS.RollSeconds[2]),
 		rollHeight = 0,
@@ -267,6 +369,9 @@ local function updateScreen(state: ScreenState, eye: Vector3, now: number, step:
 	end
 	if now >= state.dropUntil and rng:NextNumber() < SCREENS.DropChancePerSecond * step then
 		state.dropUntil = now + rng:NextNumber(SCREENS.DropSeconds[1], SCREENS.DropSeconds[2])
+		if staticSounds[state] and rng:NextNumber() < AUDIO.BurstChance then
+			playOnce(AUDIO.BurstName, glass, AUDIO.StaticSpeedRange)
+		end
 	end
 	local level = 1 - SCREENS.FlickerDepth * (0.5 + math.noise(now * SCREENS.FlickerSpeed, state.seed))
 	if now < state.dropUntil then
@@ -275,6 +380,106 @@ local function updateScreen(state: ScreenState, eye: Vector3, now: number, step:
 	gui.Brightness = state.baseBrightness * level
 	if state.light then
 		state.light.Brightness = state.baseLight * level
+	end
+end
+
+type Candidate<T> = {
+	state: T,
+	distance: number,
+}
+
+local function nearestScreens(eye: Vector3): { [ScreenState]: boolean }
+	local candidates: { Candidate<ScreenState> } = {}
+	for _, state in screenStates do
+		local glass = state.glass
+		if glass and glass:IsDescendantOf(Workspace) then
+			local distance = (glass.Position - eye).Magnitude
+			if distance <= AUDIO.StaticRadius then
+				table.insert(candidates, { state = state, distance = distance })
+			end
+		end
+	end
+	table.sort(candidates, function(a, b)
+		return a.distance < b.distance
+	end)
+	local wanted: { [ScreenState]: boolean } = {}
+	for index = 1, math.min(AUDIO.StaticCount, #candidates) do
+		wanted[candidates[index].state] = true
+	end
+	return wanted
+end
+
+local function nearestFlesh(eye: Vector3): { [FleshState]: boolean }
+	local candidates: { Candidate<FleshState> } = {}
+	for _, state in fleshStates do
+		if state.part:IsDescendantOf(Workspace) then
+			local distance = (state.part.Position - eye).Magnitude
+			if distance <= AUDIO.SquirmRadius then
+				table.insert(candidates, { state = state, distance = distance })
+			end
+		end
+	end
+	table.sort(candidates, function(a, b)
+		return a.distance < b.distance
+	end)
+	local wanted: { [FleshState]: boolean } = {}
+	for index = 1, math.min(AUDIO.SquirmCount, #candidates) do
+		wanted[candidates[index].state] = true
+	end
+	return wanted
+end
+
+local function refreshLoops(eye: Vector3)
+	local screens = nearestScreens(eye)
+	for state, sound in staticSounds do
+		if not screens[state] or not sound.Parent then
+			staticSounds[state] = nil
+			stopLoop(sound)
+		end
+	end
+	for state in screens do
+		local glass = state.glass
+		if not staticSounds[state] and glass then
+			local sound = startLoop(AUDIO.StaticName, glass, AUDIO.StaticSpeedRange, AUDIO.StaticVolumeScale)
+			if sound then
+				staticSounds[state] = sound
+			end
+		end
+	end
+	local flesh = nearestFlesh(eye)
+	for state, sound in squirmSounds do
+		if not flesh[state] or not sound.Parent then
+			squirmSounds[state] = nil
+			stopLoop(sound)
+		end
+	end
+	for state in flesh do
+		if not squirmSounds[state] then
+			local sound = startLoop(AUDIO.SquirmName, state.part, AUDIO.SquirmSpeedRange, 1)
+			if sound then
+				squirmSounds[state] = sound
+			end
+		end
+	end
+end
+
+local function squelch(eye: Vector3, now: number)
+	if now < nextSquelchAt then
+		return
+	end
+	nextSquelchAt = now + rng:NextNumber(AUDIO.SquelchInterval[1], AUDIO.SquelchInterval[2])
+	local names = AUDIO.SquelchNames
+	if #names == 0 then
+		return
+	end
+	local options: { BasePart } = {}
+	for _, state in fleshStates do
+		if state.part:IsDescendantOf(Workspace) and (state.part.Position - eye).Magnitude <= AUDIO.SquelchRadius then
+			table.insert(options, state.part)
+		end
+	end
+	if #options > 0 then
+		playOnce(names[rng:NextInteger(1, #names)], options[rng:NextInteger(1, #options)], AUDIO.SquelchSpeedRange)
 	end
 end
 
@@ -295,6 +500,11 @@ local function update(step: number)
 		nextShadowAt = now + SHADOWS.RefreshSeconds
 		updateShadows(eye)
 	end
+	if now >= nextAudioAt then
+		nextAudioAt = now + AUDIO.RefreshSeconds
+		refreshLoops(eye)
+	end
+	squelch(eye, now)
 end
 
 local function watch(tag: string, add: (Instance) -> (), remove: (Instance) -> ())
@@ -312,6 +522,8 @@ function SignalMazeController.start()
 	isStarted = true
 	accumulated = 0
 	nextShadowAt = 0
+	nextAudioAt = 0
+	nextSquelchAt = os.clock() + AUDIO.SquelchInterval[1]
 	watch(SETTINGS.FleshTag, addFlesh, removeFlesh)
 	watch(SETTINGS.ScreenTag, addScreen, removeScreen)
 	table.insert(connections, RunService.Heartbeat:Connect(function(dt: number)
@@ -340,6 +552,10 @@ function SignalMazeController.stop()
 	for _, state in screenStates do
 		restoreScreen(state)
 	end
+	for _, sound in squirmSounds do
+		stopLoop(sound, true)
+	end
+	table.clear(squirmSounds)
 	table.clear(fleshStates)
 	table.clear(screenStates)
 	table.clear(shadowed)

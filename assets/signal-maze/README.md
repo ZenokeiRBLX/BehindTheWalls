@@ -1,6 +1,6 @@
 # Signal maze mock map
 
-The current Map Creation build is version 10; see [LIGHT-V10.md](LIGHT-V10.md), which builds on [REMESH-V9.md](REMESH-V9.md), [MOOD-V8.md](MOOD-V8.md), [SIZED-V7.md](SIZED-V7.md), [VARY-V6.md](VARY-V6.md), [POPULATE-V5.md](POPULATE-V5.md), [REFINE-V4.md](REFINE-V4.md) and [REBUILD-V3.md](REBUILD-V3.md). The notes below describe earlier builds.
+The current Map Creation build is version 11; see [ENTRY-SHAFT-V11.md](ENTRY-SHAFT-V11.md), which adds the drop-in shaft to [LIGHT-V10.md](LIGHT-V10.md), which builds on [REMESH-V9.md](REMESH-V9.md), [MOOD-V8.md](MOOD-V8.md), [SIZED-V7.md](SIZED-V7.md), [VARY-V6.md](VARY-V6.md), [POPULATE-V5.md](POPULATE-V5.md), [REFINE-V4.md](REFINE-V4.md) and [REBUILD-V3.md](REBUILD-V3.md). The notes below describe earlier builds.
 
 Built in the open **Map Creation** Roblox Studio place (`126262358232325`). The map is Studio-owned at `Workspace.TheSignalMaze`; save that place to retain the geometry and lighting. These files are reference assets, not a Rojo map export.
 
